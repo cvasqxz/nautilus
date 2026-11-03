@@ -513,13 +513,17 @@ void Interface::Init(NautilusHw *hw_, NautilusEngine *engine_)
     pot_backend.hw = hw;
     pots.Init(queue, pot_backend, 250, 1.f / 512.f, 1.f / 256.f);
 
-    // Default colors (can be changed with "Color N" in options.json)
-    main_page.colors_[0] = Color(0.f, 0.f, 1.f);
-    main_page.colors_[1] = Color(0.f, 1.f, 0.f);
-    main_page.colors_[2] = Color(0.92f, 0.764f, 0.2f);
-    main_page.colors_[3] = Color(0.61f, 0.2f, 0.92f);
-    main_page.colors_[4] = Color(0.f, 1.f, 1.f);
-    main_page.colors_[5] = Color(1.f, 0.f, 0.f);
+    // Default colors (can be changed with "Color N" in options.json). Written with the same
+    // conversion as options.json, so "#rrggbb" there gives exactly the same color.
+    // The original used (0, 0, 1), (0, 1, 0), (0.92, 0.764, 0.2), (0.61, 0.2, 0.92),
+    // (0, 1, 1) and (1, 0, 0).
+    constexpr float k = 1.f / 255.f;
+    main_page.colors_[0] = Color(0x20 * k, 0xc3 * k, 0xfe * k); // #20c3fe
+    main_page.colors_[1] = Color(0x77 * k, 0xf9 * k, 0x86 * k); // #77f986
+    main_page.colors_[2] = Color(0xff * k, 0xe4 * k, 0x5c * k); // #ffe45c
+    main_page.colors_[3] = Color(0xab * k, 0x85 * k, 0xff * k); // #ab85ff
+    main_page.colors_[4] = Color(0xf0 * k, 0xd2 * k, 0xd1 * k); // #f0d2d1
+    main_page.colors_[5] = Color(0xf6 * k, 0x10 * k, 0x67 * k); // #f61067
     main_page.usb_busy_  = false;
     main_page.free_time_ = 0;
     main_page.hw_        = hw;
