@@ -1,0 +1,75 @@
+diff --git a/Source/Control/phasor.cpp b/Source/Control/phasor.cpp
+index 33ff920..ec44860 100644
+--- a/Source/Control/phasor.cpp
++++ b/Source/Control/phasor.cpp
+@@ -4,12 +4,24 @@
+ 
+ using namespace daisysp;
+ 
++// @0x2402a418
++void Phasor::Init(float sample_rate, float freq, float initial_phase)
++{
++    freq_           = freq;
++    sample_rate_    = sample_rate;
++    phs_            = initial_phase;
++    two_pi_over_sr_ = TWOPI_F / sample_rate;
++    inc_            = two_pi_over_sr_ * freq;
++}
++
++// @0x2402a440
+ void Phasor::SetFreq(float freq)
+ {
+     freq_ = freq;
+-    inc_  = (TWOPI_F * freq_) / sample_rate_;
++    inc_  = two_pi_over_sr_ * freq;
+ }
+ 
++// @0x2402a454
+ float Phasor::Process()
+ {
+     float out;
+@@ -19,9 +31,10 @@ float Phasor::Process()
+     {
+         phs_ -= TWOPI_F;
+     }
++    // Nautilus: DaisySP 90978ea (fix/pitch_shift branch), allows negative frequency
+     if(phs_ < 0.0f)
+     {
+-        phs_ = 0.0f;
++        phs_ += TWOPI_F;
+     }
+     return out;
+ }
+diff --git a/Source/Control/phasor.h b/Source/Control/phasor.h
+index d608a9a..33a95a3 100644
+--- a/Source/Control/phasor.h
++++ b/Source/Control/phasor.h
+@@ -23,12 +23,8 @@ class Phasor
+     - phs = 0.0f
+     - freq = 1.0f
+     */
+-    inline void Init(float sample_rate, float freq, float initial_phase)
+-    {
+-        sample_rate_ = sample_rate;
+-        phs_         = initial_phase;
+-        SetFreq(freq);
+-    }
++    // Nautilus: defined out of line; caches 2*pi/sample_rate (@0x2402a418)
++    void Init(float sample_rate, float freq, float initial_phase);
+ 
+     /** Initialize phasor with samplerate and freq
+     */
+@@ -54,9 +50,13 @@ class Phasor
+     */
+     inline float GetFreq() { return freq_; }
+ 
++    /** Nautilus: sets the phase (AudioCallback resets it to 0 with tap tempo) */
++    inline void SetPhase(float phase) { phs_ = phase; }
++
+   private:
+     float freq_;
+     float sample_rate_, inc_, phs_;
++    float two_pi_over_sr_; // Nautilus: +0x10, 2*pi / sample_rate
+ };
+ } // namespace daisysp
+ #endif

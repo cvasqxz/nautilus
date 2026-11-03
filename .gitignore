@@ -1,0 +1,10 @@
+# Build output
+build/
+
+# Editor and tooling files
+compile_flags.txt
+compile_commands.json
+.cache/
+.vscode/
+*.swp
+.DS_Store
