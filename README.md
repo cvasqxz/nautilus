@@ -74,6 +74,7 @@ against the official binary: the output may only differ where the change is mean
 | Default LED colors | `#20c3fe`, `#77f986`, `#ffe45c`, `#ab85ff`, `#f0d2d1`, `#f61067` |
 | Reverb diffusion follows the preset | The original ramps the allpass coefficient towards the reverb amount instead of the preset's diffusion (0.6 / 0.5 / 0.66). With the knob near the top the input diffusers turn into integrators and the reverb buffer clips constantly. |
 | Reverb delay lines stored as `float` | The original stores them as 16-bit integers (as in Rings), which adds quantization noise around -75 dBFS to the tail |
+| Stereo reverb input | The original sums L + R into one chain of input diffusers. Here each channel has its own (the right ones with different lengths) and feeds one branch of the tank, so the early reflections stay on the side of the source and the late tail spreads across both channels. |
 | Unused oscilloscope FIFOs removed | Two `FIFO<float, 16000>` that nothing reads (~125 KB of AXI SRAM); they make room for the `float` reverb buffer |
 
 With these changes the globals no longer sit at the original addresses.

@@ -9,7 +9,8 @@
 //   - The LFOs are not stmlib::CosineOscillator: they are phase + frequency and cosf();
 //     each read advances the phase, and Start also advances it every 32 samples.
 //   - Init does not call Clear() (the buffer is in .bss) and sets input_gain = 0.3.
-// Changes in this version: the delay lines are stored as float (see DataTypeFloat).
+// Changes in this version: the delay lines are stored as float (see DataTypeFloat), and the
+// input is stereo (see Process).
 #pragma once
 
 #include <math.h>
@@ -247,7 +248,11 @@ class Reverb
                 E::Reserve<4501,
                 E::Reserve<2525,
                 E::Reserve<2197,
-                E::Reserve<6312> > > > > > > > > > Memory;
+                E::Reserve<6312,
+                E::Reserve<157,
+                E::Reserve<223,
+                E::Reserve<331,
+                E::Reserve<547> > > > > > > > > > > > > > Memory;
         E::DelayLine<Memory, 0> ap1;
         E::DelayLine<Memory, 1> ap2;
         E::DelayLine<Memory, 2> ap3;
@@ -258,6 +263,10 @@ class Reverb
         E::DelayLine<Memory, 7> dap2a;
         E::DelayLine<Memory, 8> dap2b;
         E::DelayLine<Memory, 9> del2;
+        E::DelayLine<Memory, 10> bp1;
+        E::DelayLine<Memory, 11> bp2;
+        E::DelayLine<Memory, 12> bp3;
+        E::DelayLine<Memory, 13> bp4;
         E::Context c;
 
         const float kap    = diffusion_;
@@ -273,9 +282,13 @@ class Reverb
         float apout = 0.0f;
         engine_.Start(&c);
 
-        c.Read(*left + *right, gain);
-
-        // Diffusion with 4 allpasses
+        // Stereo input: each channel has its own input diffusers (the right ones with
+        // different lengths); the left one feeds the first branch of the tank and the right
+        // one the second, so the early reflections stay on the side of the source and the
+        // tank mixes them into the late tail. The original sums L + R into one diffuser chain.
+        // The gain is doubled so that a centred signal reaches each branch at the same level.
+        float apout_r = 0.0f;
+        c.Read(*left, 2.0f * gain);
         c.Read(ap1 TAIL, kap);
         c.WriteAllPass(ap1, -kap);
         c.Read(ap2 TAIL, kap);
@@ -285,6 +298,18 @@ class Reverb
         c.Read(ap4 TAIL, kap);
         c.WriteAllPass(ap4, -kap);
         c.Write(apout);
+
+        c.Load(0.0f);
+        c.Read(*right, 2.0f * gain);
+        c.Read(bp1 TAIL, kap);
+        c.WriteAllPass(bp1, -kap);
+        c.Read(bp2 TAIL, kap);
+        c.WriteAllPass(bp2, -kap);
+        c.Read(bp3 TAIL, kap);
+        c.WriteAllPass(bp3, -kap);
+        c.Read(bp4 TAIL, kap);
+        c.WriteAllPass(bp4, -kap);
+        c.Write(apout_r);
 
         // Main loop
         c.Load(apout);
@@ -299,7 +324,7 @@ class Reverb
 
         *left += (wet - *left) * amount;
 
-        c.Load(apout);
+        c.Load(apout_r);
         c.Interpolate(del1, 4460.0f, LFO_1, 40.0f, krt);
         c.Lp(lp_2, klp);
         c.Read(dap2a TAIL, kap);
