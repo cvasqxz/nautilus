@@ -766,8 +766,8 @@ struct NautilusEngine
          {1.f, 0.5f, 2.f, 0.25f, 1.5f, 0.75f, 0.125f, 0.0625f},
          {2.f, 0.25f, 0.375f, 0.1667f, 1.f, 1.f, 1.f, 1.f}},
     };                                 // +0x000
-    float   *buffer_a;                 // +0x140 SDRAM 0x603a9800
-    float   *buffer_b;                 // +0x144 SDRAM 0x620f5800
+    float   *buffer_a;                 // +0x140 SDRAM 0xc03a9800
+    float   *buffer_b;                 // +0x144 SDRAM 0xc20f5800
     uint32_t voice_len;                // +0x148 960000 samples per voice
     float    sample_rate;              // +0x14c
     size_t   divisions;                // +0x150 active voices (sensors: 1..4)
@@ -834,7 +834,7 @@ struct NautilusEngine
     float    wet_r[128];               // +0x822c
     float    out_l[128];               // +0x842c
     float    out_r[128];               // +0x862c
-    float   *freeze_buffer[2];         // +0x882c SDRAM 0x60000000 / 0x601d4c00
+    float   *freeze_buffer[2];         // +0x882c SDRAM 0xc0000000 / 0xc01d4c00
     uint32_t relock_count;             // +0x8834 tempo pulses since the last relock
     bool     delay_mode_pending;       // +0x8838
     uint8_t  pending_delay_mode;       // +0x8839

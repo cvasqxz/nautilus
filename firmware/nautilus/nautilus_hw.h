@@ -6,6 +6,7 @@
 #include <stddef.h>
 #include "daisy_seed.h"
 #include "dev/leddriver.h"
+#include "led_color.h"
 
 namespace nautilus
 {

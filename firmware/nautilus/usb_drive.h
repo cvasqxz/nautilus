@@ -6,10 +6,26 @@
 #include <stddef.h>
 #include "daisy_seed.h"
 #include "nautilus_hw.h"
+#include "usbh_core.h"
+#include "usbh_msc.h"
+
+// USB host state of the ST middleware, defined in libDaisy's usb_host.cpp
+extern "C" USBH_HandleTypeDef hUsbHostHS;
 
 namespace nautilus
 {
 using namespace daisy;
+
+// The original links the USBHostHandle of libDaisy 4e73c969, which has IsPortEnabled and
+// IsDeviceConnected; libDaisy v7.1.0 lacks them, so they read the middleware state directly.
+inline bool UsbPortEnabled()
+{
+    return USBH_IsPortEnabled(&hUsbHostHS);
+}
+inline bool UsbDeviceConnected()
+{
+    return hUsbHostHS.device.is_connected;
+}
 
 class UsbDrive
 {
@@ -64,7 +80,7 @@ class UsbDrive
         {
             if(!mounted_)
                 host.ReEnumerate();
-            if(host.IsPortEnabled() != host.IsDeviceConnected())
+            if(UsbPortEnabled() != UsbDeviceConnected())
                 host.ReEnumerate();
         }
     }

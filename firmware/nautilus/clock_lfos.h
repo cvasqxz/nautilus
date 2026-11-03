@@ -3,10 +3,11 @@
 
 #include "daisysp.h"
 #include "nautilus_engine.h"
+#include "phasor.h"
 
 namespace nautilus
 {
-using daisysp::Phasor;
+
 
 // Clock phases for the DAC and the LEDs (0x2405f998, 0x110 bytes, destructor @0x240041b0).
 // AudioCallback sets the frequencies; DacCallback advances them.

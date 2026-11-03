@@ -62,8 +62,8 @@ ClockLfos BSS_ORDER(20) clock_lfos; // 0x2405f998
 
 // SDRAM: Buffer Locked Freeze loops (10 s) and, per channel, 4 voices × 2 × 960000 samples
 // (GCC places them in reverse definition order)
-float DSY_SDRAM_BSS voice_buffer[kNumGroups][kNumVoices * 2 * 960000]; // 0x603a9800
-float DSY_SDRAM_BSS freeze_buffer[2][480000];                       // 0x60000000
+float DSY_SDRAM_BSS voice_buffer[kNumGroups][kNumVoices * 2 * 960000]; // 0xc03a9800
+float DSY_SDRAM_BSS freeze_buffer[2][480000];                       // 0xc0000000
 
 NautilusHw     BSS_ORDER(22) hw;        // 0x24078450
 Interface      BSS_ORDER(27) interface; // 0x24079af0
@@ -375,7 +375,7 @@ static void DacCallback(uint16_t **out, size_t size)
         for(int v = 0; v < kNumVoices; v++)
             for(int g = 0; g < kNumGroups; g++)
             {
-                Phasor     &p   = c.voice[g][v];
+                auto       &p   = c.voice[g][v];
                 const float out_v = c.voice_out[g][v];
                 if(c.tempo_wrapped && (c.clock[2].GetFreq() < p.GetFreq() || out_v < 0.05f || out_v > 0.95f))
                     p.SetPhase(0.f);
@@ -429,7 +429,7 @@ uint16_t DMA_BUFFER_MEM_SECTION dac_buffer[2][48]; // 0x30000188
 int main(void)
 {
     hw.Init();
-    memset((void *)0x60000000, 0, 0x4000000); // whole SDRAM
+    memset((void *)0xc0000000, 0, 0x4000000); // whole SDRAM
 
     usb.hw_ = &hw;
     USBHostHandle::Config usb_cfg;
@@ -439,6 +439,8 @@ int main(void)
     usb_cfg.error_callback        = UsbError;
     usb_cfg.userdata              = nullptr;
     usb_host.Init(usb_cfg);
+    // libDaisy v7.1.0 no longer registers the mass storage class in Init
+    usb_host.RegisterClass(USBH_MSC_CLASS);
 
     FatFSInterface::Config fsi_cfg;
     fsi_cfg.media = FatFSInterface::Config::MEDIA_USB;

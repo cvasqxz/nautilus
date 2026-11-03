@@ -9,6 +9,7 @@
 #include <stdint.h>
 #include <string.h>
 #include "daisysp.h"
+#include "phasor.h"
 
 namespace nautilus
 {
@@ -226,7 +227,7 @@ struct PitchTap
     float           sample_rate; // +0x34
     float           transpose;   // +0x38 semitones (Init: 12)
     float           ratio;       // +0x3c 2^(transpose/12)
-    daisysp::Phasor phs[2];      // +0x40 offset by π
+    Phasor          phs[2];      // +0x40 offset by π
     float           mod[2];      // +0x68
     float           mod_freq;    // +0x70
     float           slew_coeff;  // +0x74 Init: 5e-5
