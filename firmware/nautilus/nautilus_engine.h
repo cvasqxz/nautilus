@@ -728,12 +728,14 @@ struct NautilusEngine
                 break;
             default: break;
         }
-        // Diffusion follows reverb_amount, not reverb_diffusion (that is how the original does it)
+        // The original ramps the diffusion towards reverb_amount instead of the preset's
+        // reverb_diffusion: with the knob near the top the allpass coefficient reaches 1 and
+        // the input diffusers turn into integrators. Here it follows the preset.
         const float inv       = 1.f / (float)(int)size;
         const float amount_in = (reverb_amount - reverb_amount_cur) * inv;
         const float lp_in     = (reverb_lp - reverb_lp_cur) * inv;
         const float time_in   = (reverb_time - reverb_time_cur) * inv;
-        const float diff_in   = (reverb_amount - reverb_diffusion_cur) * inv;
+        const float diff_in   = (reverb_diffusion - reverb_diffusion_cur) * inv;
         size_t      ramp      = size;
         for(size_t i = 0; i < size; i++)
         {
@@ -849,10 +851,10 @@ struct NautilusEngine
     FreezeLooper looper[2];            // +0x8850
     daisysp::Limiter limiter[2];       // +0x88d8
     Reverb   reverb;                   // +0x88e0
-    uint16_t reverb_buffer[32768];     // +0x8914
+    float    reverb_buffer[32768];     // +0x8914 (uint16_t in the original)
     float    reverb_amount;            // +0x18914 shift + pot 2 (Settings)
     float    reverb_lp;                // +0x18918
-    float    reverb_diffusion;         // +0x1891c unused (see ProcessReverb)
+    float    reverb_diffusion;         // +0x1891c (unused in the original, see ProcessReverb)
     float    reverb_time;              // +0x18920
     float    reverb_amount_cur;        // +0x18924
     float    reverb_lp_cur;            // +0x18928
@@ -889,11 +891,13 @@ static_assert(offsetof(NautilusEngine, pending_feedback_mode) == 0x8844, "layout
 static_assert(offsetof(NautilusEngine, looper) == 0x8850, "layout");
 static_assert(offsetof(NautilusEngine, limiter) == 0x88d8, "layout");
 static_assert(offsetof(NautilusEngine, reverb) == 0x88e0, "layout");
-static_assert(offsetof(NautilusEngine, reverb_amount) == 0x18914, "layout");
-static_assert(offsetof(NautilusEngine, reverb_preset) == 0x18934, "layout");
-static_assert(offsetof(NautilusEngine, ping_osc) == 0x18940, "layout");
-static_assert(offsetof(NautilusEngine, ping_env) == 0x18970, "layout");
-static_assert(sizeof(NautilusEngine) == 0x189a8, "layout");
+// From here on the offsets are 0x10000 above the original's (float reverb buffer); the
+// field comments keep the original offsets.
+static_assert(offsetof(NautilusEngine, reverb_amount) == 0x28914, "layout");
+static_assert(offsetof(NautilusEngine, reverb_preset) == 0x28934, "layout");
+static_assert(offsetof(NautilusEngine, ping_osc) == 0x28940, "layout");
+static_assert(offsetof(NautilusEngine, ping_env) == 0x28970, "layout");
+static_assert(sizeof(NautilusEngine) == 0x289a8, "layout");
 #pragma GCC diagnostic pop
 
 } // namespace nautilus

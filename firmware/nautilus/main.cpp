@@ -33,25 +33,7 @@ float          BSS_ORDER(11) peak_r;   // 0x2405e4e4
 FatFSInterface BSS_ORDER(12) fsi;      // 0x2405e4e8
 USBHostHandle  BSS_ORDER(13) usb_host; // 0x2405e968
 
-// Two feeders for an oscilloscope that was never hooked up (0x2405e96c and 0x2405e97c,
-// empty destructor @0x24004194). main assigns them {fifo, samplerate, 30.0f}; in v1.2.0
-// nobody else reads them or writes to the FIFOs (only main and static initialization
-// reference their addresses).
-struct ScopeFeed
-{
-    ~ScopeFeed() {}
-    FIFO<float, 16000> *fifo;
-    float               samplerate;
-    float               rate;      // 30 Hz
-    uint32_t            unused_c;  // never written
-};
-ScopeFeed BSS_ORDER(14) scope_feed_a;
-ScopeFeed BSS_ORDER(15) scope_feed_b;
-
 float BSS_ORDER(04) resolution_hyst; // 0x2403f084 hysteresis of the resolution index (AudioCallback)
-
-FIFO<float, 16000> BSS_ORDER(05) fifo_a; // 0x2403f088
-FIFO<float, 16000> BSS_ORDER(06) fifo_b; // 0x2404ea9c
 
 // Output peaks: written by AudioCallback and read by MainPage::Draw. They are two globals:
 // the original loads each one's address separately (from an array it would load only one).
@@ -465,13 +447,6 @@ int main(void)
     if(!calibrate)
         calibrate = hw.buttons[BUTTON_PURGE].RawState();
 
-    const float sr = hw.seed.AudioSampleRate();
-    scope_feed_a.samplerate = sr;
-    scope_feed_a.rate       = 30.f;
-    scope_feed_a.fifo       = &fifo_a;
-    scope_feed_b.samplerate = hw.seed.AudioSampleRate();
-    scope_feed_b.rate       = 30.f;
-    scope_feed_b.fifo       = &fifo_b;
     clock_lfos.prev_tempo_phase = 0.f;
     clock_lfos.tempo_phase      = 0.f;
     clock_lfos.clock[0].Init(hw.dac_samplerate, 2.f, 0.f);

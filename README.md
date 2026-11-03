@@ -63,6 +63,21 @@ build uses both libraries unmodified and carries those changes in the firmware i
 The v7.1.0 USB host driver also resets the host stack when it gets stuck in the abort
 state, which the original's driver does not do.
 
+## Changes from the original firmware
+
+This branch (`dev`) starts from the reconstruction and changes the firmware's behavior
+where the original has bugs or limitations. Each change is checked in differential emulation
+against the official binary: the output may only differ where the change is meant to act.
+
+| Change | Effect |
+|---|---|
+| Default LED colors | `#20c3fe`, `#77f986`, `#ffe45c`, `#ab85ff`, `#f0d2d1`, `#f61067` |
+| Reverb diffusion follows the preset | The original ramps the allpass coefficient towards the reverb amount instead of the preset's diffusion (0.6 / 0.5 / 0.66). With the knob near the top the input diffusers turn into integrators and the reverb buffer clips constantly. |
+| Reverb delay lines stored as `float` | The original stores them as 16-bit integers (as in Rings), which adds quantization noise around -75 dBFS to the tail |
+| Unused oscilloscope FIFOs removed | Two `FIFO<float, 16000>` that nothing reads (~125 KB of AXI SRAM); they make room for the `float` reverb buffer |
+
+With these changes the globals no longer sit at the original addresses.
+
 ## Building
 
 ### Requirements

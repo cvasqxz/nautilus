@@ -9,6 +9,7 @@
 //   - The LFOs are not stmlib::CosineOscillator: they are phase + frequency and cosf();
 //     each read advances the phase, and Start also advances it every 32 samples.
 //   - Init does not call Clear() (the buffer is in .bss) and sets input_gain = 0.3.
+// Changes in this version: the delay lines are stored as float (see DataTypeFloat).
 #pragma once
 
 #include <math.h>
@@ -21,42 +22,27 @@ namespace nautilus
 
 #define TAIL , -1
 
-static inline int32_t Clip16(int32_t x)
-{
-    if(x < -32768)
-        return -32768;
-    else if(x > 32767)
-        return 32767;
-    return x;
-}
-
 enum LfoIndex
 {
     LFO_1,
     LFO_2,
 };
 
-// FORMAT_16_BIT
-struct DataType16
+// FORMAT_32_BIT (as in Rings' fx_engine.h). The original stores the delay lines as 16-bit
+// integers (FORMAT_16_BIT), which adds quantization noise around -75 dBFS to the tail and
+// clips the stored samples at +/-1.
+struct DataTypeFloat
 {
-    typedef uint16_t T;
-    static inline float Decompress(T value)
-    {
-        // The original multiplies by 3.05175e-05f (0x37ffffd5), not by 1/32768 (0x38000000):
-        // the difference changes the last bit of the samples stored in the buffer.
-        return static_cast<float>(static_cast<int16_t>(value)) * 3.05175e-05f;
-    }
-    static inline T Compress(float value)
-    {
-        return static_cast<uint16_t>(Clip16(static_cast<int32_t>(value * 32768.0f)));
-    }
+    typedef float T;
+    static inline float Decompress(T value) { return value; }
+    static inline T     Compress(float value) { return value; }
 };
 
 template <size_t size>
 class FxEngine
 {
   public:
-    typedef typename DataType16::T T;
+    typedef typename DataTypeFloat::T T;
 
     void Init(T *buffer) { buffer_ = buffer; }
 
@@ -113,7 +99,7 @@ class FxEngine
         template <typename D>
         inline void Write(D &d, int32_t offset, float scale)
         {
-            T w = DataType16::Compress(accumulator_);
+            T w = DataTypeFloat::Compress(accumulator_);
             if(offset == -1)
                 buffer_[(write_ptr_ + D::base + D::length - 1) & MASK] = w;
             else
@@ -148,7 +134,7 @@ class FxEngine
                 r = buffer_[(write_ptr_ + D::base + D::length - 1) & MASK];
             else
                 r = buffer_[(write_ptr_ + D::base + offset) & MASK];
-            float r_f      = DataType16::Decompress(r);
+            float r_f      = DataTypeFloat::Decompress(r);
             previous_read_ = r_f;
             accumulator_ += r_f * scale;
         }
@@ -171,9 +157,9 @@ class FxEngine
             offset += amplitude * engine_->LfoValue(index);
             int32_t offset_integral   = static_cast<int32_t>(offset);
             float   offset_fractional = offset - static_cast<float>(offset_integral);
-            float   a                 = DataType16::Decompress(
+            float   a                 = DataTypeFloat::Decompress(
                 buffer_[(write_ptr_ + offset_integral + D::base) & MASK]);
-            float b = DataType16::Decompress(
+            float b = DataTypeFloat::Decompress(
                 buffer_[(write_ptr_ + offset_integral + D::base + 1) & MASK]);
             float x        = a + (b - a) * offset_fractional;
             previous_read_ = x;
@@ -238,7 +224,7 @@ class FxEngine
 class Reverb
 {
   public:
-    void Init(uint16_t *buffer, float sample_rate)
+    void Init(float *buffer, float sample_rate)
     {
         engine_.Init(buffer);
         engine_.SetLfoFrequency(LFO_1, 0.5f / sample_rate);
