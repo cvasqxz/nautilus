@@ -1,5 +1,5 @@
 /* Nautilus: copy of libDaisy v7.1.0 core/STM32H750IB_sram.lds, with the changes shown
-   by the Reset_Handler and _sbrk literals in nautilus.bin:
+   by the Reset_Handler and _sbrk literals in Nautilus_v1_2_0-wht3.bin:
    - .data (VMA 0x2403d800, copied from the end of the code) and .bss (0x2403dc18-0x2407d824)
      go in SRAM (AXI), not DTCM: the .bss (~256 KB) does not fit in the 128 KB of DTCM.
      The 0x2403d800 origin comes from the binary; nothing was found that uses the ~60 KB

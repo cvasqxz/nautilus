@@ -3,7 +3,7 @@
 A source-level reconstruction of the firmware for the **Qu-Bit Nautilus** (v1.2.0), a
 stereo delay Eurorack module built on the Electrosmith Daisy Seed (STM32H750).
 
-The code was rebuilt from the released binary (`nautilus.bin`). It targets the same
+The code was rebuilt from the released binary (`Nautilus_v1_2_0-wht3.bin`). It targets the same
 toolchain, compiler flags, libraries and memory layout as the original. All globals sit
 at the original addresses, and most comments in the source give the address of the
 original function or object they correspond to (`@0x2400xxxx`).

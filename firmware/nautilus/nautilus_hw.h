@@ -1,5 +1,5 @@
 // Nautilus (Qu-Bit) v1.2.0 — module hardware
-// Reconstructed from nautilus.bin: ctor @0x24005df0, Init @0x24005edc,
+// Reconstructed from Nautilus_v1_2_0-wht3.bin: ctor @0x24005df0, Init @0x24005edc,
 // SetRgb @0x2400489c, SetColor @0x24006494. Global object at 0x24078450 (0x630 bytes).
 #pragma once
 

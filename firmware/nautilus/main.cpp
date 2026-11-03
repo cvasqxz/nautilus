@@ -1,4 +1,4 @@
-// Nautilus (Qu-Bit) v1.2.0 — reconstruction from nautilus.bin
+// Nautilus (Qu-Bit) v1.2.0 — reconstruction from Nautilus_v1_2_0-wht3.bin
 // Every non-trivial block carries "// @0x2400xxxx" with its source address.
 // The globals follow the original's definition order (StaticInit @0x24010d00).
 
