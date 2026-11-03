@@ -44,7 +44,7 @@ class MainPage : public UiPage
     Color           colors_[kNumColors];     // +0x38
 };
 
-// Calibration page: opens if shift is held at power-up. Vtable 0x2402dd5c.
+// Calibration page: opens if shift is held at power-up (see HeldAtBoot). Vtable 0x2402dd5c.
 class CalPage : public UiPage
 {
   public:
@@ -70,7 +70,7 @@ struct PotBackend
 struct Interface
 {
     // Inlined in main (@0x2400eb4c..0x2400ec40)
-    __attribute__((always_inline)) inline void Init(NautilusHw *hw, NautilusEngine *engine);
+    __attribute__((always_inline)) inline void Init(NautilusHw *hw, NautilusEngine *engine, bool test_page);
 
     MainPage                          main_page; // +0x000
     CalPage                           cal_page;  // +0x080
@@ -492,7 +492,7 @@ void CalPage::Draw(const UiCanvasDescriptor &canvas)
 }
 
 // Inlined in main (@0x2400eb4c..0x2400ec40)
-void Interface::Init(NautilusHw *hw_, NautilusEngine *engine_)
+void Interface::Init(NautilusHw *hw_, NautilusEngine *engine_, bool test_page)
 {
     hw = hw_;
     for(auto &s : suppress_release)
@@ -532,7 +532,8 @@ void Interface::Init(NautilusHw *hw_, NautilusEngine *engine_)
     cal_page.engine_     = engine;
 
     ui.OpenPage(main_page);
-    if(hw->buttons[BUTTON_SHIFT].RawState())
+    // Shift held at power-up (checked by main, see HeldAtBoot)
+    if(test_page)
         ui.OpenPage(cal_page);
 }
 

@@ -407,6 +407,20 @@ static void DacCallback(uint16_t **out, size_t size)
 // in .sram1_bss is at 0x30000248); the DAC uses a single channel and only the first half.
 uint16_t DMA_BUFFER_MEM_SECTION dac_buffer[2][48]; // 0x30000188
 
+// A button counts as held at power-up only if it reads as pressed for kBootHoldMs in a row.
+// When it is not pressed, the first read returns at once and the boot is not delayed.
+static constexpr int kBootHoldMs = 200;
+static bool HeldAtBoot(Switch &button)
+{
+    for(int ms = 0; ms < kBootHoldMs; ms++)
+    {
+        if(!button.RawState())
+            return false;
+        System::Delay(1);
+    }
+    return button.RawState();
+}
+
 // @0x2400eaa0
 int main(void)
 {
@@ -437,15 +451,18 @@ int main(void)
     usb.on_unmount_ = UnmountUsb;
     usb.SetEvent(UsbDrive::EVENT_NONE);
 
-    interface.Init(&hw, &engine);
+    // Buttons held at power-up. The original reads each pin once: a single spurious read
+    // opened the input test page (Shift) or recalibrated the CV inputs with whatever was
+    // patched at that moment (Freeze or Purge). Here they must be held for kBootHoldMs.
+    const bool test_page = HeldAtBoot(hw.buttons[BUTTON_SHIFT]);
+    bool       calibrate = HeldAtBoot(hw.buttons[BUTTON_FREEZE]);
+    if(!calibrate)
+        calibrate = HeldAtBoot(hw.buttons[BUTTON_PURGE]);
+
+    interface.Init(&hw, &engine, test_page);
 
     sonar_mode = SONAR_STEPPED_VOLTAGE;
     resolution_hyst = 0.f;
-
-    // Button 0 or 3 held at power-up: calibrate the CV inputs
-    bool calibrate = hw.buttons[BUTTON_FREEZE].RawState();
-    if(!calibrate)
-        calibrate = hw.buttons[BUTTON_PURGE].RawState();
 
     clock_lfos.prev_tempo_phase = 0.f;
     clock_lfos.tempo_phase      = 0.f;
