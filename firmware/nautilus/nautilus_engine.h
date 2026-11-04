@@ -731,22 +731,20 @@ struct NautilusEngine
         // The original ramps the diffusion towards reverb_amount instead of the preset's
         // reverb_diffusion: with the knob near the top the allpass coefficient reaches 1 and
         // the input diffusers turn into integrators. Here it follows the preset.
-        const float inv       = 1.f / (float)(int)size;
-        const float amount_in = (reverb_amount - reverb_amount_cur) * inv;
-        const float lp_in     = (reverb_lp - reverb_lp_cur) * inv;
-        const float time_in   = (reverb_time - reverb_time_cur) * inv;
-        const float diff_in   = (reverb_diffusion - reverb_diffusion_cur) * inv;
-        size_t      ramp      = size;
+        //
+        // The original also ramps every parameter linearly over one block (2.7 ms), so a jump
+        // of the knob (shift + Resolution takes the pot position as is) switched the wet
+        // signal almost instantly, and turning it down cut the decay of the tail that was
+        // already playing. Here they follow one-pole filters: ~50 ms for the mix, the filter and the
+        // diffusion, and ~0.5 s for the decay time, so the tail fades instead of stopping.
+        constexpr float kMixCoeff  = 4.2e-4f; // 1 - exp(-1 / (0.05 s * 48 kHz))
+        constexpr float kTimeCoeff = 4.2e-5f; // 1 - exp(-1 / (0.5 s * 48 kHz))
         for(size_t i = 0; i < size; i++)
         {
-            if(ramp)
-            {
-                reverb_amount_cur += amount_in;
-                ramp--;
-                reverb_lp_cur += lp_in;
-                reverb_time_cur += time_in;
-                reverb_diffusion_cur += diff_in;
-            }
+            reverb_amount_cur += kMixCoeff * (reverb_amount - reverb_amount_cur);
+            reverb_lp_cur += kMixCoeff * (reverb_lp - reverb_lp_cur);
+            reverb_diffusion_cur += kMixCoeff * (reverb_diffusion - reverb_diffusion_cur);
+            reverb_time_cur += kTimeCoeff * (reverb_time - reverb_time_cur);
             reverb.set_amount(reverb_amount_cur);
             reverb.set_time(reverb_time_cur);
             reverb.set_lp(reverb_lp_cur);

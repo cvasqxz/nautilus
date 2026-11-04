@@ -7,7 +7,8 @@
 // Differences seen in the binary with respect to the original:
 //   - Process works one sample at a time (without the `while(size--)` loop).
 //   - The LFOs are not stmlib::CosineOscillator: they are phase + frequency and cosf();
-//     each read advances the phase, and Start also advances it every 32 samples.
+//     each read advances the phase, and Start also advances it every 32 samples. This
+//     version replaces them with quadrature oscillators (see SetLfoFrequency).
 //   - Init does not call Clear() (the buffer is in .bss) and sets input_gain = 0.3.
 // Changes in this version: the delay lines are stored as float (see DataTypeFloat), and the
 // input is stereo (see Process).
@@ -175,19 +176,19 @@ class FxEngine
         int32_t   write_ptr_;
     };
 
+    // The LFOs are quadrature oscillators: Start rotates (cos, sin) by 2*pi*frequency once per
+    // sample and LfoValue reads the cosine, so there is no cosf() in the audio path. The
+    // original advanced a phase on every read plus once every 32 samples (about 3 % fast) and
+    // called cosf() twice per sample.
     inline void SetLfoFrequency(LfoIndex index, float frequency)
     {
-        lfo_phase_[index] = 0.f;
-        lfo_freq_[index]  = frequency;
+        lfo_cos_[index]   = 1.f;
+        lfo_sin_[index]   = 0.f;
+        lfo_rot_cos_[index] = cosf(frequency * TWOPI_F);
+        lfo_rot_sin_[index] = sinf(frequency * TWOPI_F);
     }
 
-    inline float LfoValue(LfoIndex index)
-    {
-        lfo_phase_[index] += lfo_freq_[index];
-        if(lfo_phase_[index] >= 1.f)
-            lfo_phase_[index] -= 1.f;
-        return cosf(lfo_phase_[index] * TWOPI_F);
-    }
+    inline float LfoValue(LfoIndex index) const { return lfo_cos_[index]; }
 
     inline void Start(Context *c)
     {
@@ -199,13 +200,23 @@ class FxEngine
         c->engine_        = this;
         c->buffer_        = buffer_;
         c->write_ptr_     = write_ptr_;
+        for(int i = 0; i < 2; i++)
+        {
+            const float x = lfo_cos_[i], y = lfo_sin_[i];
+            lfo_cos_[i]   = x * lfo_rot_cos_[i] - y * lfo_rot_sin_[i];
+            lfo_sin_[i]   = y * lfo_rot_cos_[i] + x * lfo_rot_sin_[i];
+        }
         if((write_ptr_ & 31) == 0)
         {
+            // Keeps the amplitude at 1 (first-order correction of the rounding drift)
             for(int i = 0; i < 2; i++)
             {
-                lfo_phase_[i] += lfo_freq_[i];
-                if(lfo_phase_[i] >= 1.f)
-                    lfo_phase_[i] -= 1.f;
+                const float g = 1.5f
+                                - 0.5f
+                                      * (lfo_cos_[i] * lfo_cos_[i]
+                                         + lfo_sin_[i] * lfo_sin_[i]);
+                lfo_cos_[i] *= g;
+                lfo_sin_[i] *= g;
             }
         }
     }
@@ -218,9 +229,18 @@ class FxEngine
 
     int32_t write_ptr_;    // +0x00
     T      *buffer_;       // +0x04
-    float   lfo_phase_[2]; // +0x08
-    float   lfo_freq_[2];  // +0x10
+    float   lfo_cos_[2]; // +0x08 (lfo_phase_ in the original)
+    float   lfo_sin_[2]; // +0x10 (lfo_freq_ in the original)
+
+    // Rotation per sample; static so that the layout of the reverb does not change
+    static float lfo_rot_cos_[2];
+    static float lfo_rot_sin_[2];
 };
+
+template <size_t size>
+float FxEngine<size>::lfo_rot_cos_[2];
+template <size_t size>
+float FxEngine<size>::lfo_rot_sin_[2];
 
 class Reverb
 {

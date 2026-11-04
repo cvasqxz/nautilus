@@ -126,9 +126,25 @@ bool MainPage::OnPotMoved(uint16_t potID, float newPosition)
             break;
         case PARAM_DISPERSAL: hw_->params[PARAM_DISPERSAL].knob = newPosition; break;
         case PARAM_RESOLUTION:
+        {
+            // Last position of the pot, with or without shift (static so that the layout of
+            // MainPage does not change)
+            static float res_prev = -1.f;
+            const float  prev     = res_prev < 0.f ? newPosition : res_prev;
+            res_prev              = newPosition;
             if(shift)
             {
-                engine_->reverb_amount = fclamp(newPosition, 0.f, 1.f);
+                // The original sets the amount to the pot position, so touching the pot
+                // jumped from the current amount to wherever the pot was. Here the movement
+                // is scaled from the current amount towards the end the pot is turning to:
+                // no jump, and the pot ends still reach 0 and 1.
+                const float delta = newPosition - prev;
+                float       a     = engine_->reverb_amount;
+                if(delta > 0.f && prev < 1.f)
+                    a += delta * (1.f - a) / (1.f - prev);
+                else if(delta < 0.f && prev > 0.f)
+                    a += delta * a / prev;
+                engine_->reverb_amount = fclamp(a, 0.f, 1.f);
             }
             else
             {
@@ -136,6 +152,7 @@ bool MainPage::OnPotMoved(uint16_t potID, float newPosition)
                 resolution_moved_time_             = System::GetNow();
             }
             break;
+        }
         case PARAM_REVERSAL: hw_->params[PARAM_REVERSAL].knob = newPosition; break;
         case PARAM_DEPTH: hw_->params[PARAM_DEPTH].knob = newPosition; break;
         case PARAM_FEEDBACK: hw_->params[PARAM_FEEDBACK].knob = newPosition; break;

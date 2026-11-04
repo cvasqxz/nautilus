@@ -76,6 +76,9 @@ against the official binary: the output may only differ where the change is mean
 | Reverb delay lines stored as `float` | The original stores them as 16-bit integers (as in Rings), which adds quantization noise around -75 dBFS to the tail |
 | Stereo reverb input | The original sums L + R into one chain of input diffusers. Here each channel has its own (the right ones with different lengths) and feeds one branch of the tank, so the early reflections stay on the side of the source and the late tail spreads across both channels. |
 | Buttons held at power-up must be held for 200 ms | The original reads Shift, Freeze and Purge once at power-up. A single spurious read opened the input test page (Shift) or recalibrated the CV inputs with whatever was patched (Freeze or Purge). |
+| Reverb LFOs without `cosf()` | The original calls `cosf()` twice per sample for the two delay modulation LFOs, and their phase runs about 3 % fast. Here they are quadrature oscillators (one rotation per sample) at the nominal 0.5 and 0.3 Hz. |
+| Smooth reverb amount changes | The original ramps the reverb parameters over one block (2.7 ms), and the decay time is tied to the amount, so turning it down cut the tail already playing. Here the mix, filter and diffusion follow ~50 ms one-pole filters and the decay time a ~0.5 s one. |
+| Shift + Resolution picks up the reverb amount | The original sets the amount to the pot position, so touching the pot with shift held jumped from the current amount to wherever Resolution was. Here the movement is scaled from the current amount towards the end the pot turns to: no jump, and the pot ends still give 0 and 1. |
 | Unused oscilloscope FIFOs removed | Two `FIFO<float, 16000>` that nothing reads (~125 KB of AXI SRAM); they make room for the `float` reverb buffer |
 
 With these changes the globals no longer sit at the original addresses.
