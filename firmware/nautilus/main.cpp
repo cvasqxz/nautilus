@@ -136,7 +136,7 @@ static void TimerCallback(void *data)
 // Tap tempo: shift or the clock gate. Filters out variations below 2.5 ms.
 static void Tap()
 {
-    const uint32_t now = System::GetUs();
+    const uint32_t now = System::GetTick();
     const uint32_t us  = (now - tempo.last_us) / (System::GetTickFreq() / 1000000);
     const int32_t  d   = tempo.interval_us - us;
     if(d < -2500 || d > 2500)
