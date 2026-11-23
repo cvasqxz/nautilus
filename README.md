@@ -1,98 +1,138 @@
-# Nautilus firmware reconstruction
+# Nautilus alternative firmware
 
-A source-level reconstruction of the firmware for the **Qu-Bit Nautilus** (v1.2.0), a
-stereo delay Eurorack module built on the Electrosmith Daisy Seed (STM32H750).
+Alternative firmware for the **Qu-Bit Nautilus**, the stereo delay Eurorack module built on
+the Electrosmith Daisy Seed.
 
-The code was rebuilt from the released binary (`Nautilus_v1_2_0-wht3.bin`). It targets the same
-toolchain, compiler flags, libraries and memory layout as the original. All globals sit
-at the original addresses, and most comments in the source give the address of the
-original function or object they correspond to (`@0x2400xxxx`).
-
-The resulting image is not byte-identical to the official one. Some differences in code
-generation remain: register allocation, block ordering, inlining and unrolling decisions.
-In differential emulation against the official binary, though, the outputs match bit for
-bit: audio, the Sonar DAC output, the LED buffers, RAM, the settings written to QSPI and
-the operations on the USB drive.
+It started as a source-level reconstruction of the official v1.2.0 firmware and has since
+changed how several controls work: Depth is a tone tilt for the repeats, Mix and Chroma are
+independent dry and wet levels, the Sonar output plays in tune with an oscillator, and the
+module no longer needs a USB stick. The delay engine, the delay and feedback modes, freeze,
+purge and the reverb character are the same as in the official firmware.
 
 This is an independent project. It is not affiliated with or endorsed by Qu-Bit
 Electronix.
 
-## Layout
+## What changes when you play it
 
-```
-firmware/nautilus/   module source, Makefile and linker script
-libs/libDaisy/       libDaisy v7.1.0 (submodule)
-libs/DaisySP/        DaisySP dc448d4 (submodule)
-libs/coreJSON/       coreJSON a0cd612 (submodule; unused on dev, which has no options.json)
-```
+### Depth: dark or bright repeats
 
-The project sits two levels below `libs/` on purpose. The original binary embeds the
-path `../../libs/coreJSON/source/core_json.c` in a coreJSON assert.
+Chroma's six effects are gone. **Depth** now tilts the tone of the repeats:
 
-### Source files
+- **Centre**: the repeats are untouched.
+- **Turning left**: every repeat comes back darker, like an old tape echo.
+- **Turning right**: every repeat comes back thinner and brighter.
 
-| File | Contents |
+The filter sits inside the feedback, so the effect builds up on every pass. Changes are
+smooth, so Depth can be swept by hand or with its CV input. The output meter LEDs show the
+setting: they turn from green (flat) towards purple (dark) or yellow (bright).
+
+### Mix and Chroma: a dry/wet mixer
+
+- **Mix** sets the level of the dry signal.
+- **Chroma** sets the level of the delayed (wet) signal.
+
+They are independent, like two faders on a mixer, and each one follows its CV input. Both at
+12 o'clock sound like the official firmware with Mix at the centre. Both fully up give
+about 6 dB more level, so watch the output.
+
+### Sonar: quantized pitch CV
+
+The Sonar output keeps its evolving stepped voltage, built from the rhythm of the delay
+voices (Sensors, Dispersal and Reversal shape the pattern, and it follows the tap or Clock
+In tempo). Every step is now **quantized to a note at 1 V/octave**, so you can patch Sonar
+into an oscillator's pitch input and hear a melody in tune.
+
+- **Shift + Freeze** picks the scale: 1 chromatic, 2 major, 3 natural minor, 4 major
+  pentatonic, 5 minor pentatonic, 6 blues.
+- After a change, the **Freeze LED blinks the scale number** in that scale's colour. While
+  you hold Shift, the Freeze LED shows the colour of the current scale.
+- The scale is remembered after power-off.
+- The range is 0 to 5 V (five octaves), with 0 V as the root. Tune the root on the
+  oscillator.
+
+The Sonar clock modes of the official firmware are gone.
+
+### Tap tempo with Shift
+
+Shift is both the tap tempo button and the modifier for the second functions. In the
+official firmware every Shift press counted as a tap, so after setting the reverb with
+Shift + Resolution, for example, the next tap measured the whole pause and the tempo
+jumped. Now a Shift press that you use for a combination does not count as a tap. A plain
+tap is taken when you release Shift, timed from the moment you pressed it. Clock In works
+as before.
+
+### Reverb
+
+The reverb (Shift + Resolution) sounds cleaner and changes more smoothly:
+
+- **Smooth changes**: turning the amount up or down no longer cuts the tail that is
+  already playing.
+- **No jump when you grab the knob**: the amount continues from its current value, wherever
+  Resolution happens to be, and the knob ends still reach zero and full.
+- **Cleaner at high settings**: it no longer clips and grows harsh near the top, and its
+  tail has no low-level quantization noise.
+- **Stereo input**: a sound on the left keeps its early reflections on the left (and the
+  same for the right) before the tail spreads across both sides.
+
+### No USB stick
+
+The module no longer reads `options.json` from a USB stick. Every option of the official
+firmware stays at its default value:
+
+| Option | Value |
 |---|---|
-| `main.cpp` | Globals, audio and DAC callbacks, tap tempo, settings, Sonar quantizer and `main` |
-| `nautilus_engine.h` | DSP engine: voices, delay and feedback modes, purge, mix and reverb routing |
-| `pitch_tap.h` | Delay tap with pitch shift (Shimmer / De-Shimmer) |
-| `reverser.h` | Reverse reader |
-| `chroma.h` | Chroma effects of the original (kept for reference; not built on dev) |
-| `tilt.h` | Tilt filter in the feedback path (dev, replaces Chroma) |
-| `sonar.h` | Scales and quantizer of the Sonar output (dev) |
-| `freeze_looper.h` | Looper for the "Buffer Locked Freeze" |
-| `reverb.h` | Reverb, ported from Mutable Instruments Rings |
-| `clock_lfos.h` | Clock phases for the Sonar output and the LEDs |
-| `nautilus_hw.h` | Module hardware: controls, CV calibration, LED drivers |
-| `led_color.h` | RGB color for the LEDs |
-| `phasor.h` | Phase accumulator used by the delay taps and the clock phases |
-| `ui.h` | Main and calibration pages, LED drawing and control handling |
+| Shimmer / De-Shimmer interval | one octave up / down |
+| Reverb preset | Normal |
+| Freeze mix behavior | Normal |
+| Quantize freeze | on |
+| Buffer locked freeze | on |
+| Clear on mode change | off |
+| Continuous purge | off |
+| Attenuverter targets | Dispersal and Feedback |
+| LED colours | `#20c3fe`, `#77f986`, `#ffe45c`, `#ab85ff`, `#f0d2d1`, `#f61067` |
 
-### Differences from the original's libraries
+Firmware updates still go through USB with the Daisy bootloader (see Flashing).
 
-The original was linked against libDaisy and DaisySP with a few local changes. This
-build uses both libraries unmodified and carries those changes in the firmware instead:
+### Other changes
 
-| Change in the original | In this build |
-|---|---|
-| `daisy::Color` from libDaisy `bbfa87cb` (#639): constructors, setters, `operator+`, `Blend` | `led_color.h`, same interface and behavior |
-| `daisysp::Phasor` modified by Qu-Bit: caches `2π/sample_rate`, wraps negative phases, `SetPhase` | `phasor.h`, same layout and behavior |
-| SDRAM remapped to `0x60000000` (FMC bank swap) | libDaisy's default address, `0xC0000000` |
+- **No LED dimmer**: Shift + Chroma used to set the LED brightness. The LEDs now stay at full
+  brightness.
+- **Power-up buttons must be held**: the input test page (Shift) and the CV calibration
+  (Freeze or Purge) only open if the button is held for 200 ms at power-up. In the official
+  firmware a single noisy reading could open the test page or recalibrate the CV inputs by
+  accident.
 
-## Changes from the original firmware
+## Controls
 
-This branch (`dev`) starts from the reconstruction and changes the firmware's behavior
-where the original has bugs or limitations. Each change is checked in differential emulation
-against the official binary: the output may only differ where the change is meant to act.
+| Control | Alone | With Shift held |
+|---|---|---|
+| Sensors, Dispersal, Reversal, Feedback | as in the official firmware | — |
+| Resolution | tempo multiplier or division of the delay time | reverb amount |
+| Depth | tone tilt of the repeats (centre = flat) | — |
+| Mix | dry level | — |
+| Chroma | wet level | — |
+| Attenuverter 1 | CV amount for Dispersal | input level |
+| Attenuverter 2 | CV amount for Feedback | — |
+| Shift | tap tempo (on release) | — |
+| Freeze | freeze | next Sonar scale |
+| Feedback button | feedback mode | stereo / mono input |
+| Delay Mode button | delay mode | free-running delay on / off |
+| Purge | purge | reset modes; on release, also reset the settings |
 
-| Change | Effect |
-|---|---|
-| Default LED colors | `#20c3fe`, `#77f986`, `#ffe45c`, `#ab85ff`, `#f0d2d1`, `#f61067` |
-| Reverb diffusion follows the preset | The original ramps the allpass coefficient towards the reverb amount instead of the preset's diffusion (0.6 / 0.5 / 0.66). With the knob near the top the input diffusers turn into integrators and the reverb buffer clips constantly. |
-| Reverb delay lines stored as `float` | The original stores them as 16-bit integers (as in Rings), which adds quantization noise around -75 dBFS to the tail |
-| Stereo reverb input | The original sums L + R into one chain of input diffusers. Here each channel has its own (the right ones with different lengths) and feeds one branch of the tank, so the early reflections stay on the side of the source and the late tail spreads across both channels. |
-| Buttons held at power-up must be held for 200 ms | The original reads Shift, Freeze and Purge once at power-up. A single spurious read opened the input test page (Shift) or recalibrated the CV inputs with whatever was patched (Freeze or Purge). |
-| Reverb LFOs without `cosf()` | The original calls `cosf()` twice per sample for the two delay modulation LFOs, and their phase runs about 3 % fast. Here they are quadrature oscillators (one rotation per sample) at the nominal 0.5 and 0.3 Hz. |
-| Smooth reverb amount changes | The original ramps the reverb parameters over one block (2.7 ms), and the decay time is tied to the amount, so turning it down cut the tail already playing. Here the mix, filter and diffusion follow ~50 ms one-pole filters and the decay time a ~0.5 s one. |
-| Shift + Resolution picks up the reverb amount | The original sets the amount to the pot position, so touching the pot with shift held jumped from the current amount to wherever Resolution was. Here the movement is scaled from the current amount towards the end the pot turns to: no jump, and the pot ends still give 0 and 1. |
-| Depth is a bipolar tilt filter instead of Chroma | Chroma (six effects picked with the Chroma pot, amount with Depth) is gone. Depth at the centre leaves the repeats untouched; to the left every repeat gets darker, to the right thinner, building up on each pass through the feedback. The meter LEDs go from colour 1 towards colour 3 (darker) or colour 2 (thinner). |
-| Mix and Chroma are dry and wet levels | The original crossfades dry and wet with Mix, by "Mix Mode" in `options.json`. Here Mix sets the dry level and Chroma the wet level, independently; both at 12 o'clock sound like the original's linear mix at the centre. The freeze options still force a fully wet output. |
-| No LED dimmer | Shift + Chroma no longer sets the LED brightness, which stays at its full value. |
-| No USB drive, no `options.json` | The original reads its options from `options.json` on a USB stick at every mount and keeps them only until power-off. The USB host, FatFS and the JSON parser are gone; every option keeps its default value (Transpose Up/Down 12, Reverb Preset Normal, Freeze Mix Behavior Normal, Quantize Freeze on, Buffer Locked Freeze on, Clear on Mode Change off, Continuous Purge off, attenuverters on Dispersal and Feedback, default colours). Firmware updates still go through the Daisy bootloader over USB DFU. |
-| Sonar quantized to 1 V/octave | The original's Stepped Voltage adds one equal step per open gate (5 V / (2 × Sensors)), so most levels fall between notes. Here the same voltage is quantized to the nearest note of a scale (0 V = root, 60 semitones over 0..5 V), so it can drive an oscillator's pitch in tune; the sequence and the range stay the same. Shift + Freeze steps through six scales (chromatic, major, natural minor, major pentatonic, minor pentatonic, blues), saved with the settings; the Freeze LED blinks the scale number in its colour, and shows that colour while shift is held. The DAC code assumes 0..4095 = 0..5 V (the manual's range). The two clock modes, picked in `options.json`, are gone. |
-| Octave check on the test page | While the input test page is open (shift held at power-up), Sonar alternates 1 V and 3 V once per second, two octaves apart, to check the output scaling with a tuner or a meter. |
-| Shift combinations are not taps | Shift is both tap tempo and the modifier key, and the original counts every shift press as a tap: after shift + Resolution, the next tap measured the whole pause and the tempo jumped. Here the shift tap is applied when shift is released, with the time and tempo phase of the press, and only if shift was not used as a modifier meanwhile (any other button, or Resolution or attenuverter 1). Clock In taps are unchanged. |
-| Unused oscilloscope FIFOs removed | Two `FIFO<float, 16000>` that nothing reads (~125 KB of AXI SRAM); they make room for the `float` reverb buffer |
+### At power-up
 
-With these changes the globals no longer sit at the original addresses.
+- **Hold Shift**: input test page. Each LED shows a knob (blue) and its CV input (green).
+  Sonar alternates between 1 V and 3 V once per second, two octaves apart, so you can check
+  its tuning with a tuner or a meter. Press Purge to leave.
+- **Hold Freeze or Purge**: recalibrate the CV inputs. Unplug every CV cable first: the
+  module takes the voltage of each input at rest as its zero, and keeps it after power-off.
 
 ## Building
 
 ### Requirements
 
 - **GNU Arm Embedded Toolchain 10-2020-q4-major** (GCC 10.2.1), the one shipped with the
-  Daisy Toolchain. Other versions build too, but the generated code drifts further from
-  the original.
+  Daisy Toolchain and the one used for development. Other versions should work too.
 - `make`, `git`, and `dfu-util` for flashing.
 
 ### Steps
@@ -107,7 +147,7 @@ export GCC_PATH=/path/to/gcc-arm-none-eabi-10-2020-q4-major/bin
 # 1. libDaisy
 make -C libs/libDaisy GCC_PATH=$GCC_PATH
 
-# 2. DaisySP, built with -ffast-math like the original
+# 2. DaisySP, built with -ffast-math like the official firmware
 make -C libs/DaisySP GCC_PATH=$GCC_PATH OPT="-O3 -ffast-math"
 
 # 3. Firmware
