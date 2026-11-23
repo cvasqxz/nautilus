@@ -2,11 +2,9 @@
 
 Alternative firmware for the **Qu-Bit Nautilus**, the stereo delay Eurorack module built on the Electrosmith Daisy Seed.
 
-It started as a source-level reconstruction of the official v1.2.0 firmware and has since changed how several controls work: Depth is a tone tilt for the repeats, Mix and Chroma are independent dry and wet levels, the Sonar output plays in tune with an oscillator, and the module no longer needs a USB stick. The delay engine, the delay and feedback modes, freeze, purge and the reverb character are the same as in the official firmware.
-
 This is an independent project. It is not affiliated with or endorsed by Qu-Bit Electronix.
 
-## What changes when you play it
+## Changes
 
 ### Depth: dark or bright repeats
 
