@@ -67,12 +67,14 @@ struct Settings
     uint8_t free_time     = 0;   // interface.main_page.free_time_
     int     input_mode    = 0;   // engine.input_mode
     float   reverb_amount = 0.f; // engine.reverb_amount
+    uint8_t sonar_scale   = 0;   // sonar_scale (not in the original; checked when loaded)
 
     bool operator!=(const Settings &a) const
     {
         return delay_mode != a.delay_mode || feedback_mode != a.feedback_mode
                || input_level != a.input_level || free_time != a.free_time
-               || input_mode != a.input_mode || reverb_amount != a.reverb_amount;
+               || input_mode != a.input_mode || reverb_amount != a.reverb_amount
+               || sonar_scale != a.sonar_scale;
     }
 };
 PersistentStorage<Settings> BSS_ORDER(25) settings_storage(hw.seed.qspi); // 0x24079a84
@@ -295,17 +297,55 @@ static void AudioCallback(AudioHandle::InputBuffer  in,
 }
 
 // Sonar output: the original's Stepped Voltage (one equal step per open gate, sized by
-// Sensors), rounded to the nearest semitone at 1 V/octave so that it can drive the pitch of
-// an oscillator in tune. The DAC (0..4095) comes out as 0..5 V (manual: "Sonar CV output
-// range: 0V to +5V"), so a semitone is 4095 / 60 = 68.25 codes. The original's two clock
-// modes (picked in options.json) are gone.
-static constexpr int kSonarCodesPerVolt = 4095 / 5;  // 819 (exact)
-static constexpr int kSonarSemitones    = 5 * 12;    // 60 semitones over the full range
-static inline uint16_t QuantizeSonar(int value)
+// Sensors), quantized at 1 V/octave to the nearest note of the chosen scale so that it can
+// drive the pitch of an oscillator in tune. The DAC (0..4095) comes out as 0..5 V (manual:
+// "Sonar CV output range: 0V to +5V"): 60 semitones over the full range, 0 V = the root.
+// The original's two clock modes (picked in options.json) are gone.
+static constexpr int kSonarCodesPerVolt = 4095 / 5; // 819 (exact)
+static constexpr int kSonarSemitones    = 5 * 12;   // 60 semitones over the full range
+
+// Shift + Freeze steps through them; the number and colour of each are shown on the Freeze
+// LED (1 = colour 0, ..., 6 = colour 5)
+struct SonarScale
 {
-    const int semis = (value * kSonarSemitones * 2 + 4095) / (4095 * 2); // nearest
-    return (uint16_t)((semis * 4095 * 2 + kSonarSemitones) / (kSonarSemitones * 2));
+    uint8_t size;
+    uint8_t degrees[12];
+};
+static constexpr SonarScale kSonarScales[kNumSonarScales] = {
+    {12, {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11}}, // 1 chromatic
+    {7, {0, 2, 4, 5, 7, 9, 11}},                  // 2 major
+    {7, {0, 2, 3, 5, 7, 8, 10}},                  // 3 natural minor
+    {5, {0, 2, 4, 7, 9}},                         // 4 major pentatonic
+    {5, {0, 3, 5, 7, 10}},                        // 5 minor pentatonic
+    {6, {0, 3, 5, 6, 7, 10}},                     // 6 blues
+};
+
+// Nearest note of the scale (the lower one on a tie), as a DAC code
+static uint16_t QuantizeSonar(int value, int scale)
+{
+    const float       st   = value * ((float)kSonarSemitones / 4095.f);
+    const SonarScale &sc   = kSonarScales[scale];
+    const int         oct  = (int)st / 12;
+    int               best = 0;
+    float             dist = 1e9f;
+    for(int o = oct; o <= oct + 1; o++)
+        for(int d = 0; d < sc.size; d++)
+        {
+            const int n = 12 * o + sc.degrees[d];
+            if(n > kSonarSemitones)
+                continue;
+            const float e = n > st ? n - st : st - n;
+            if(e < dist)
+            {
+                dist = e;
+                best = n;
+            }
+        }
+    return (uint16_t)((best * 4095 * 2 + kSonarSemitones) / (kSonarSemitones * 2));
 }
+
+uint8_t  nautilus::sonar_scale      = 0;
+uint32_t nautilus::sonar_scale_time = 0;
 
 // Test page (shift held at power-up): Sonar alternates 1 V and 3 V once per second, two
 // octaves apart, to check the scaling with a tuner or a meter.
@@ -352,7 +392,10 @@ static void DacCallback(uint16_t **out, size_t size)
                              && (engine.reversed[g][v] ? out_v < 0.5f : out_v >= 0.5f);
             }
 
-        // Stepped Voltage as in the original, then quantized (see QuantizeSonar)
+        // Stepped Voltage as in the original, then quantized (see QuantizeSonar). It only
+        // changes on a gate edge or a scale change, so the last result is kept.
+        static int      last_value = -1, last_scale = -1;
+        static uint16_t last_code  = 0;
         const int step  = 0x1000 / divisions / 2;
         int       value = 0;
         for(int v = 0; v < kNumVoices; v++)
@@ -365,7 +408,15 @@ static void DacCallback(uint16_t **out, size_t size)
             out[0][i] = (System::GetNow() / 1000) & 1 ? 3 * kSonarCodesPerVolt
                                                       : 1 * kSonarCodesPerVolt;
         else
-            out[0][i] = QuantizeSonar(value);
+        {
+            if(value != last_value || sonar_scale != last_scale)
+            {
+                last_value = value;
+                last_scale = sonar_scale;
+                last_code  = QuantizeSonar(value, sonar_scale);
+            }
+            out[0][i] = last_code;
+        }
     }
 }
 
@@ -438,6 +489,8 @@ int main(void)
     engine.pending_clear           = false;
     engine.feedback_mode_pending   = true;
     engine.SetReverbAmount(s.reverb_amount); // the original clamps it to [0, 1] when loading it
+    // Settings saved before the field existed have whatever followed them in the sector
+    sonar_scale = s.sonar_scale < kNumSonarScales ? s.sonar_scale : 0;
     engine.delay_mode_pending      = true;
 
     hw.seed.StartAudio(AudioCallback);
@@ -468,6 +521,7 @@ int main(void)
             cur.input_level   = engine.input_level;
             cur.free_time     = interface.main_page.free_time_;
             cur.input_mode    = engine.input_mode;
+            cur.sonar_scale   = sonar_scale;
             settings_storage.Save();
             last_save = now;
         }

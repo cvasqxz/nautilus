@@ -107,6 +107,11 @@ extern NautilusHw hw;
 extern float      meter_l, meter_r;
 extern float      out_env_l, out_env_r;
 extern bool       sonar_octave_test; // Sonar alternates 1 V / 3 V while the test page is open
+// Scale of the Sonar quantizer (see kSonarScales in main.cpp): shift + Freeze picks the next
+// one; the Freeze LED blinks its number in its colour (colors_[scale]).
+static constexpr int kNumSonarScales = 6;
+extern uint8_t       sonar_scale;
+extern uint32_t      sonar_scale_time; // System::GetNow() of the last change
 
 // LED canvas: the UI clears and flushes the PCA9685 buffer
 // @0x240047b8 (clearFunction)
@@ -199,6 +204,14 @@ bool MainPage::OnButton(uint16_t buttonID,
         {
             case BUTTON_FREEZE:
             {
+                if(shift)
+                {
+                    // Shift + Freeze: next scale of the Sonar quantizer (the original
+                    // ignores shift here and toggles the freeze)
+                    sonar_scale      = (sonar_scale + 1) % kNumSonarScales;
+                    sonar_scale_time = System::GetNow();
+                    break;
+                }
                 NautilusEngine *e = engine_;
                 if(!e->frozen && !e->freeze_request)
                 {
@@ -298,7 +311,8 @@ void MainPage::Draw(const UiCanvasDescriptor &canvas)
     if(hw_->buttons[BUTTON_SHIFT].TimeHeldMs() > 150.f)
     {
         // Shift: alternate button functions
-        hw_->SetColor(0, Color(0.7f, 1.f, 1.f) * 0.5f);
+        // Freeze LED: colour of the current Sonar scale (the original: dim white)
+        hw_->SetColor(0, colors_[sonar_scale] * 0.5f);
         hw_->SetColor(3, Color(0.7f, 1.f, 1.f) * ((System::GetNow() & 0x1ff) < 255 ? 0.5f : 0.f));
         hw_->SetColor(2, engine_->input_mode == 0 ? colors_[0] : colors_[1]);
         hw_->SetColor(1, free_time_ == 0 ? colors_[0] : colors_[1]);
@@ -435,6 +449,15 @@ void MainPage::Draw(const UiCanvasDescriptor &canvas)
         hw_->SetColor(1, phase ? Color() : Color(0.7f, 1.f, 1.f) * 0.8f);
         hw_->SetColor(2, phase ? Color(0.7f, 1.f, 1.f) * 0.8f : Color());
         hw_->SetColor(3, phase ? Color() : Color(0.7f, 1.f, 1.f) * 0.8f);
+    }
+
+    // Sonar scale changed: the Freeze LED blinks N times (N = scale number, 1..6) in the
+    // scale's colour, 150 ms on / 150 ms off
+    {
+        const uint32_t t = now - sonar_scale_time;
+        const uint32_t n = sonar_scale + 1u;
+        if(sonar_scale_time != 0 && t < n * 300u)
+            hw_->SetColor(0, (t % 300u) < 150u ? colors_[sonar_scale] : Color());
     }
 
     // Test ping: a quarter of the tempo pulse per LED pair
