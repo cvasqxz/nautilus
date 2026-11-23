@@ -1,6 +1,5 @@
 # Nautilus (Qu-Bit) — firmware v1.2.0 reconstruction
-# The original's coreJSON assert uses the path "../../libs/coreJSON/source/core_json.c",
-# so the project lives two levels below the folder that contains libs/.
+# The project lives two levels below the folder that contains libs/.
 
 TARGET = nautilus
 
@@ -10,11 +9,6 @@ TARGET = nautilus
 # Module code: a single C++ translation unit
 CPP_SOURCES = main.cpp
 
-# coreJSON is built inside the project (it comes before the startup code in the binary)
-C_SOURCES = ../../libs/coreJSON/source/core_json.c
-C_INCLUDES = -I../../libs/coreJSON/source/include
-
-USE_FATFS = 1
 APP_TYPE = BOOT_SRAM
 LDSCRIPT = STM32H750IB_sram_nautilus.lds
 # -O3 without full -ffast-math: the module code uses vcmpe, and expf is not hoisted out of

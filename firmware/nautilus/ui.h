@@ -35,7 +35,7 @@ class MainPage : public UiPage
     uint32_t        time_mult_time_;         // +0x20 time of the last change of resolution
     uint32_t        sensors_moved_time_;     // +0x24 time of the last movement of pot 0
     uint32_t        resolution_moved_time_;  // +0x28 time of the last movement of pot 2
-    bool            usb_busy_;               // +0x2c written by TimerCallback
+    bool            usb_busy_;               // +0x2c USB stick busy (unused: there is no USB)
     uint8_t         pad_2d[0x3];             // +0x2d TODO(recon)
     uint32_t        reset_time_;             // +0x30 time of Shift + Purge
     bool            saved_f8_changed_;       // +0x34 shift + pot 8
@@ -106,6 +106,7 @@ static_assert(sizeof(Interface) == 0x9cc, "layout");
 extern NautilusHw hw;
 extern float      meter_l, meter_r;
 extern float      out_env_l, out_env_r;
+extern bool       sonar_octave_test; // Sonar alternates 1 V / 3 V while the test page is open
 
 // LED canvas: the UI clears and flushes the PCA9685 buffer
 // @0x240047b8 (clearFunction)
@@ -426,14 +427,6 @@ void MainPage::Draw(const UiCanvasDescriptor &canvas)
         saved_f8_changed_ = false;
     }
 
-    // USB busy: LEDs 7 and 8 blink
-    if(usb_busy_)
-    {
-        const bool blink = System::GetNow() & 64;
-        hw_->SetColor(7, blink ? Color() : Color(0.7f, 1.f, 1.f) * 0.6f);
-        hw_->SetColor(8, blink ? Color() : Color(0.7f, 1.f, 1.f) * 0.6f);
-    }
-
     // Shift + Purge: the button LEDs alternate for ~0.5 s
     if(now - reset_time_ < 511)
     {
@@ -467,6 +460,7 @@ bool CalPage::OnButton(uint16_t buttonID,
     if(buttonID == BUTTON_PURGE)
     {
         engine_->ResetModes();
+        sonar_octave_test = false;
         Close();
     }
     return false;

@@ -15,23 +15,16 @@
 #include "nautilus_engine.h"
 #include "clock_lfos.h"
 #include "ui.h"
-#include "usb_drive.h"
 
 using namespace daisy;
 using namespace daisysp;
 
 namespace nautilus
 {
-const char *kModuleName      = "Qu-Bit Nautilus"; // .data 0x2403d804
-const char *kFirmwareVersion = "v1.2.0";          // .data 0x2403d808
-
 float          BSS_ORDER(07) meter_l;  // 0x2405e4b0 meter level (MainPage::Draw)
 float          BSS_ORDER(08) meter_r;  // 0x2405e4b4
 float          BSS_ORDER(09) peak_l;   // 0x2405e4b8 left output peak follower
-UsbDrive       BSS_ORDER(10) usb;      // 0x2405e4bc
 float          BSS_ORDER(11) peak_r;   // 0x2405e4e4
-FatFSInterface BSS_ORDER(12) fsi;      // 0x2405e4e8
-USBHostHandle  BSS_ORDER(13) usb_host; // 0x2405e968
 
 float BSS_ORDER(04) resolution_hyst; // 0x2403f084 hysteresis of the resolution index (AudioCallback)
 
@@ -88,7 +81,6 @@ PersistentStorage<Settings> BSS_ORDER(25) settings_storage(hw.seed.qspi); // 0x2
 
 using namespace nautilus;
 
-#include "options.h"
 
 namespace nautilus
 {
@@ -105,32 +97,10 @@ static void FlushLeds(const UiCanvasDescriptor &canvas)
 }
 } // namespace nautilus
 
-// USB host callbacks: they only record the event; main processes it
-static void UsbConnect(void *data)
-{
-    usb.SetEvent(UsbDrive::EVENT_CONNECT);
-}
-static void UsbDisconnect(void *data)
-{
-    usb.SetEvent(UsbDrive::EVENT_DISCONNECT);
-}
-static void UsbClassActive(void *data)
-{
-    usb.SetEvent(UsbDrive::EVENT_CLASS_ACTIVE);
-}
-static void UsbError(void *data) {}
-
-// @0x24004200
-static void UnmountUsb()
-{
-    f_mount(0, "", 0);
-}
-
 // @0x24004770 — 120 Hz timer
 static void TimerCallback(void *data)
 {
     interface.ui.Process();
-    interface.main_page.usb_busy_ = usb.IsBusy();
 }
 
 // Tap tempo: shift or the clock gate. Filters out variations below 2.5 ms.
@@ -324,6 +294,32 @@ static void AudioCallback(AudioHandle::InputBuffer  in,
     }
 }
 
+// Sonar output, quantized to 1 V/octave. The original adds one equal step per open gate
+// (the size depends on Sensors) and also has two clock modes picked in options.json. Here
+// each open gate moves one degree up a minor pentatonic scale, so the output can drive the
+// pitch of an oscillator: 0 gates is the root, 8 gates almost two octaves above.
+// The DAC (0..4095) comes out as 0..5 V (manual: "Sonar CV output range: 0V to +5V"). The
+// root sits at 1 V, away from the ends, where the buffered DAC output is not linear.
+static constexpr int kSonarCodesPerVolt = 4095 / 5; // 819 (exact)
+static constexpr int kSonarRootVolts    = 1;
+static constexpr int kPentatonic[5]     = {0, 3, 5, 7, 10};
+// Integer rounding of (root + semitones / 12) * codes per volt
+static constexpr uint16_t SonarCode(int degree)
+{
+    return (uint16_t)(((kSonarRootVolts * 12 + 12 * (degree / 5) + kPentatonic[degree % 5])
+                           * kSonarCodesPerVolt * 2
+                       + 12)
+                      / 24);
+}
+// Test page (shift held at power-up): Sonar alternates 1 V and 3 V once per second, two
+// octaves apart, to check the scaling with a tuner or a meter.
+bool nautilus::sonar_octave_test = false;
+
+static constexpr uint16_t kSonarNotes[kNumVoices * kNumGroups + 1] = {
+    SonarCode(0), SonarCode(1), SonarCode(2), SonarCode(3), SonarCode(4),
+    SonarCode(5), SonarCode(6), SonarCode(7), SonarCode(8),
+};
+
 // @0x240049bc — Sonar output (DAC, 12 bits) and clock phases
 static void DacCallback(uint16_t **out, size_t size)
 {
@@ -365,24 +361,16 @@ static void DacCallback(uint16_t **out, size_t size)
                              && (engine.reversed[g][v] ? out_v < 0.5f : out_v >= 0.5f);
             }
 
-        if(sonar_mode == SONAR_STEPPED_VOLTAGE)
-        {
-            const int step  = 0x1000 / divisions / 2;
-            uint16_t  value = 0;
-            for(int v = 0; v < kNumVoices; v++)
-                for(int g = 0; g < kNumGroups; g++)
-                    if(gate[v][g])
-                        value += step;
-            out[0][i] = value >= 0xfff ? 0xfff : value;
-        }
-        else if(sonar_mode == SONAR_MASTER_CLOCK)
-        {
-            out[0][i] = c.tempo_phase < 0.5f ? 0xfff : 0;
-        }
-        else if(sonar_mode == SONAR_VARIABLE_CLOCK)
-        {
-            out[0][i] = c.voice_out[0][0] < 0.5f ? 0xfff : 0;
-        }
+        // Sonar: the number of open gates picks a note (see kSonarNotes)
+        int open = 0;
+        for(int v = 0; v < kNumVoices; v++)
+            for(int g = 0; g < kNumGroups; g++)
+                open += gate[v][g] ? 1 : 0;
+        if(sonar_octave_test)
+            out[0][i] = (System::GetNow() / 1000) & 1 ? 3 * kSonarCodesPerVolt
+                                                      : 1 * kSonarCodesPerVolt;
+        else
+            out[0][i] = kSonarNotes[open];
     }
 }
 
@@ -410,30 +398,6 @@ int main(void)
     hw.Init();
     memset((void *)0xc0000000, 0, 0x4000000); // whole SDRAM
 
-    usb.hw_ = &hw;
-    USBHostHandle::Config usb_cfg;
-    usb_cfg.connect_callback      = UsbConnect;
-    usb_cfg.disconnect_callback   = UsbDisconnect;
-    usb_cfg.class_active_callback = UsbClassActive;
-    usb_cfg.error_callback        = UsbError;
-    usb_cfg.userdata              = nullptr;
-    usb_host.Init(usb_cfg);
-    // libDaisy v7.1.0 no longer registers the mass storage class in Init
-    usb_host.RegisterClass(USBH_MSC_CLASS);
-
-    FatFSInterface::Config fsi_cfg;
-    fsi_cfg.media = FatFSInterface::Config::MEDIA_USB;
-    fsi.Init(fsi_cfg);
-    f_mount(&fsi.GetUSBFileSystem(), fsi.GetUSBPath(), 0);
-
-    usb.connected_  = false;
-    usb.mounting_   = false;
-    usb.mounted_    = false;
-    usb.mount_time_ = 0;
-    usb.on_mount_   = LoadOptions;
-    usb.on_unmount_ = UnmountUsb;
-    usb.SetEvent(UsbDrive::EVENT_NONE);
-
     // Buttons held at power-up. The original reads each pin once: a single spurious read
     // opened the input test page (Shift) or recalibrated the CV inputs with whatever was
     // patched at that moment (Freeze or Purge). Here they must be held for kBootHoldMs.
@@ -443,8 +407,8 @@ int main(void)
         calibrate = HeldAtBoot(hw.buttons[BUTTON_PURGE]);
 
     interface.Init(&hw, &engine, test_page);
+    sonar_octave_test = test_page;
 
-    sonar_mode = SONAR_STEPPED_VOLTAGE;
     resolution_hyst = 0.f;
 
     clock_lfos.prev_tempo_phase = 0.f;
@@ -498,8 +462,6 @@ int main(void)
     for(;;)
     {
         const uint32_t now = System::GetNow();
-        usb_host.Process();
-        usb.Process(usb_host);
 
         // Settings: every 5 s, and only written if they changed
         if(now - last_save > 5000)

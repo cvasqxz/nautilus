@@ -23,7 +23,7 @@ Electronix.
 firmware/nautilus/   module source, Makefile and linker script
 libs/libDaisy/       libDaisy v7.1.0 (submodule)
 libs/DaisySP/        DaisySP dc448d4 (submodule)
-libs/coreJSON/       coreJSON a0cd612 (submodule)
+libs/coreJSON/       coreJSON a0cd612 (submodule; unused on dev, which has no options.json)
 ```
 
 The project sits two levels below `libs/` on purpose. The original binary embeds the
@@ -33,11 +33,12 @@ path `../../libs/coreJSON/source/core_json.c` in a coreJSON assert.
 
 | File | Contents |
 |---|---|
-| `main.cpp` | Globals, audio and DAC callbacks, tap tempo, settings, USB host callbacks and `main` |
+| `main.cpp` | Globals, audio and DAC callbacks, tap tempo, settings, Sonar quantizer and `main` |
 | `nautilus_engine.h` | DSP engine: voices, delay and feedback modes, purge, mix and reverb routing |
 | `pitch_tap.h` | Delay tap with pitch shift (Shimmer / De-Shimmer) |
 | `reverser.h` | Reverse reader |
-| `chroma.h` | Chroma effects in the feedback path |
+| `chroma.h` | Chroma effects of the original (on dev only `RationalTanh` is used) |
+| `tilt.h` | Tilt filter in the feedback path (dev, replaces Chroma) |
 | `freeze_looper.h` | Looper for the "Buffer Locked Freeze" |
 | `reverb.h` | Reverb, ported from Mutable Instruments Rings |
 | `clock_lfos.h` | Clock phases for the Sonar output and the LEDs |
@@ -45,8 +46,6 @@ path `../../libs/coreJSON/source/core_json.c` in a coreJSON assert.
 | `led_color.h` | RGB color for the LEDs |
 | `phasor.h` | Phase accumulator used by the delay taps and the clock phases |
 | `ui.h` | Main and calibration pages, LED drawing and control handling |
-| `options.h` | Loading of `options.json` from the USB drive |
-| `usb_drive.h` | USB drive mounting state machine |
 
 ### Differences from the original's libraries
 
@@ -57,11 +56,7 @@ build uses both libraries unmodified and carries those changes in the firmware i
 |---|---|
 | `daisy::Color` from libDaisy `bbfa87cb` (#639): constructors, setters, `operator+`, `Blend` | `led_color.h`, same interface and behavior |
 | `daisysp::Phasor` modified by Qu-Bit: caches `2π/sample_rate`, wraps negative phases, `SetPhase` | `phasor.h`, same layout and behavior |
-| USB host driver from libDaisy `4e73c969` (`IsPortEnabled`, `IsDeviceConnected`) | The v7.1.0 driver; `usb_drive.h` reads the port and device state from the ST middleware, and `main` registers the mass storage class |
 | SDRAM remapped to `0x60000000` (FMC bank swap) | libDaisy's default address, `0xC0000000` |
-
-The v7.1.0 USB host driver also resets the host stack when it gets stuck in the abort
-state, which the original's driver does not do.
 
 ## Changes from the original firmware
 
@@ -80,8 +75,11 @@ against the official binary: the output may only differ where the change is mean
 | Smooth reverb amount changes | The original ramps the reverb parameters over one block (2.7 ms), and the decay time is tied to the amount, so turning it down cut the tail already playing. Here the mix, filter and diffusion follow ~50 ms one-pole filters and the decay time a ~0.5 s one. |
 | Shift + Resolution picks up the reverb amount | The original sets the amount to the pot position, so touching the pot with shift held jumped from the current amount to wherever Resolution was. Here the movement is scaled from the current amount towards the end the pot turns to: no jump, and the pot ends still give 0 and 1. |
 | Depth is a bipolar tilt filter instead of Chroma | Chroma (six effects picked with the Chroma pot, amount with Depth) is gone. Depth at the centre leaves the repeats untouched; to the left every repeat gets darker, to the right thinner, building up on each pass through the feedback. The meter LEDs go from colour 1 towards colour 3 (darker) or colour 2 (thinner). |
-| Mix and Chroma are dry and wet levels | The original crossfades dry and wet with Mix, by "Mix Mode" in `options.json` (now ignored). Here Mix sets the dry level and Chroma the wet level, independently; both at 12 o'clock sound like the original's linear mix at the centre. The freeze options still force a fully wet output. |
+| Mix and Chroma are dry and wet levels | The original crossfades dry and wet with Mix, by "Mix Mode" in `options.json`. Here Mix sets the dry level and Chroma the wet level, independently; both at 12 o'clock sound like the original's linear mix at the centre. The freeze options still force a fully wet output. |
 | No LED dimmer | Shift + Chroma no longer sets the LED brightness, which stays at its full value. |
+| No USB drive, no `options.json` | The original reads its options from `options.json` on a USB stick at every mount and keeps them only until power-off. The USB host, FatFS and the JSON parser are gone; every option keeps its default value (Transpose Up/Down 12, Reverb Preset Normal, Freeze Mix Behavior Normal, Quantize Freeze on, Buffer Locked Freeze on, Clear on Mode Change off, Continuous Purge off, attenuverters on Dispersal and Feedback, default colours). Firmware updates still go through the Daisy bootloader over USB DFU. |
+| Sonar quantized to 1 V/octave | The original's Stepped Voltage adds one equal step per open gate (sized by Sensors), and two clock modes can be picked in `options.json`. Here each open gate moves one degree up a minor pentatonic scale from a 1 V root (0 gates = root, 8 gates = the fifth two octaves up, 2.58 V), to drive an oscillator's pitch. The DAC code assumes 0..4095 = 0..5 V (the manual's range). |
+| Octave check on the test page | While the input test page is open (shift held at power-up), Sonar alternates 1 V and 3 V once per second, two octaves apart, to check the output scaling with a tuner or a meter. |
 | Unused oscilloscope FIFOs removed | Two `FIFO<float, 16000>` that nothing reads (~125 KB of AXI SRAM); they make room for the `float` reverb buffer |
 
 With these changes the globals no longer sit at the original addresses.
