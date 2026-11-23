@@ -294,31 +294,22 @@ static void AudioCallback(AudioHandle::InputBuffer  in,
     }
 }
 
-// Sonar output, quantized to 1 V/octave. The original adds one equal step per open gate
-// (the size depends on Sensors) and also has two clock modes picked in options.json. Here
-// each open gate moves one degree up a minor pentatonic scale, so the output can drive the
-// pitch of an oscillator: 0 gates is the root, 8 gates almost two octaves above.
-// The DAC (0..4095) comes out as 0..5 V (manual: "Sonar CV output range: 0V to +5V"). The
-// root sits at 1 V, away from the ends, where the buffered DAC output is not linear.
-static constexpr int kSonarCodesPerVolt = 4095 / 5; // 819 (exact)
-static constexpr int kSonarRootVolts    = 1;
-static constexpr int kPentatonic[5]     = {0, 3, 5, 7, 10};
-// Integer rounding of (root + semitones / 12) * codes per volt
-static constexpr uint16_t SonarCode(int degree)
+// Sonar output: the original's Stepped Voltage (one equal step per open gate, sized by
+// Sensors), rounded to the nearest semitone at 1 V/octave so that it can drive the pitch of
+// an oscillator in tune. The DAC (0..4095) comes out as 0..5 V (manual: "Sonar CV output
+// range: 0V to +5V"), so a semitone is 4095 / 60 = 68.25 codes. The original's two clock
+// modes (picked in options.json) are gone.
+static constexpr int kSonarCodesPerVolt = 4095 / 5;  // 819 (exact)
+static constexpr int kSonarSemitones    = 5 * 12;    // 60 semitones over the full range
+static inline uint16_t QuantizeSonar(int value)
 {
-    return (uint16_t)(((kSonarRootVolts * 12 + 12 * (degree / 5) + kPentatonic[degree % 5])
-                           * kSonarCodesPerVolt * 2
-                       + 12)
-                      / 24);
+    const int semis = (value * kSonarSemitones * 2 + 4095) / (4095 * 2); // nearest
+    return (uint16_t)((semis * 4095 * 2 + kSonarSemitones) / (kSonarSemitones * 2));
 }
+
 // Test page (shift held at power-up): Sonar alternates 1 V and 3 V once per second, two
 // octaves apart, to check the scaling with a tuner or a meter.
 bool nautilus::sonar_octave_test = false;
-
-static constexpr uint16_t kSonarNotes[kNumVoices * kNumGroups + 1] = {
-    SonarCode(0), SonarCode(1), SonarCode(2), SonarCode(3), SonarCode(4),
-    SonarCode(5), SonarCode(6), SonarCode(7), SonarCode(8),
-};
 
 // @0x240049bc — Sonar output (DAC, 12 bits) and clock phases
 static void DacCallback(uint16_t **out, size_t size)
@@ -361,16 +352,20 @@ static void DacCallback(uint16_t **out, size_t size)
                              && (engine.reversed[g][v] ? out_v < 0.5f : out_v >= 0.5f);
             }
 
-        // Sonar: the number of open gates picks a note (see kSonarNotes)
-        int open = 0;
+        // Stepped Voltage as in the original, then quantized (see QuantizeSonar)
+        const int step  = 0x1000 / divisions / 2;
+        int       value = 0;
         for(int v = 0; v < kNumVoices; v++)
             for(int g = 0; g < kNumGroups; g++)
-                open += gate[v][g] ? 1 : 0;
+                if(gate[v][g])
+                    value += step;
+        if(value > 0xfff)
+            value = 0xfff;
         if(sonar_octave_test)
             out[0][i] = (System::GetNow() / 1000) & 1 ? 3 * kSonarCodesPerVolt
                                                       : 1 * kSonarCodesPerVolt;
         else
-            out[0][i] = kSonarNotes[open];
+            out[0][i] = QuantizeSonar(value);
     }
 }
 
