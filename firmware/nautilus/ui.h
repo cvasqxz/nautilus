@@ -107,6 +107,8 @@ extern NautilusHw hw;
 extern float      meter_l, meter_r;
 extern float      out_env_l, out_env_r;
 extern bool       sonar_octave_test; // Sonar alternates 1 V / 3 V while the test page is open
+// Set when shift is held and used as a modifier: AudioCallback undoes its tap
+extern volatile bool shift_used_as_modifier;
 // Scale of the Sonar quantizer (see kSonarScales in main.cpp): shift + Freeze picks the next
 // one; the Freeze LED blinks its number in its colour (colors_[scale]).
 static constexpr int kNumSonarScales = 6;
@@ -140,6 +142,7 @@ bool MainPage::OnPotMoved(uint16_t potID, float newPosition)
             res_prev              = newPosition;
             if(shift)
             {
+                shift_used_as_modifier = true;
                 // The original sets the amount to the pot position, so touching the pot
                 // jumped from the current amount to wherever the pot was. Here the movement
                 // is scaled from the current amount towards the end the pot is turning to:
@@ -169,6 +172,7 @@ bool MainPage::OnPotMoved(uint16_t potID, float newPosition)
         case KNOB_ATTENUVERTER_1:
             if(shift)
             {
+                shift_used_as_modifier = true;
                 // Detent at 0.95..1.05 → exactly 1.0. GCC moves the comparison onto newPosition
                 // (0.18666667 and 0.21333332 in the binary) and computes the formula first.
                 engine_->input_level = newPosition * 3.75f + 0.25f;
@@ -198,6 +202,9 @@ bool MainPage::OnButton(uint16_t buttonID,
                         bool     isRetriggering)
 {
     const bool shift = hw_->buttons[BUTTON_SHIFT].Pressed();
+    // Any other button with shift held is a shift combination: shift was not a tap
+    if(shift && buttonID != BUTTON_SHIFT)
+        shift_used_as_modifier = true;
     if(numberOfPresses == 1)
     {
         switch(buttonID)

@@ -47,6 +47,9 @@ class Phasor
 
     inline float GetFreq() { return freq_; }
 
+    // Phase in radians (0..2π), to undo a tap tempo reset (see UndoShiftTap)
+    inline float GetPhase() const { return phs_; }
+
   private:
     float freq_;
     float sample_rate_, inc_, phs_;

@@ -105,8 +105,9 @@ static void TimerCallback(void *data)
     interface.ui.Process();
 }
 
-// Tap tempo: shift or the clock gate. Filters out variations below 2.5 ms.
-static void Tap()
+// Tap tempo: shift or the clock gate. Filters out variations below 2.5 ms. Returns whether
+// it reset the clock phases.
+static bool Tap()
 {
     const uint32_t now = System::GetTick();
     const uint32_t us  = (now - tempo.last_us) / (System::GetTickFreq() / 1000000);
@@ -139,8 +140,48 @@ static void Tap()
         clock_lfos.clock[2].SetPhase(0.f);
         clock_lfos.clock[0].SetPhase(0.f);
         clock_lfos.clock[1].SetPhase(0.f);
+        clock_lfos.clock[2].SetFreq(tempo.bpm * (1.f / 60.f));
+        return true;
     }
     clock_lfos.clock[2].SetFreq(tempo.bpm * (1.f / 60.f));
+    return false;
+}
+
+// Shift is both tap tempo and the modifier key. Its tap is taken on the press, so that the
+// timing stays exact, and undone if shift ends up used as a modifier while held (the UI sets
+// shift_used_as_modifier). The original counts every shift press as a tap, so after
+// shift + Resolution, for example, the next tap measured the whole pause.
+volatile bool nautilus::shift_used_as_modifier = false;
+static TempoState shift_tap_saved;       // tempo before the last shift tap
+static float      shift_tap_phase[3];    // clock phases before it (radians)
+static bool       shift_tap_reset   = false; // it reset the clock phases
+static bool       shift_tap_pending = false; // it can still be undone
+
+static void ShiftTap()
+{
+    shift_tap_saved = tempo;
+    for(int i = 0; i < 3; i++)
+        shift_tap_phase[i] = clock_lfos.clock[i].GetPhase();
+    shift_tap_reset   = Tap();
+    shift_tap_pending = true;
+}
+
+static void UndoShiftTap()
+{
+    tempo = shift_tap_saved;
+    if(shift_tap_reset)
+    {
+        // Each phase ran from 0 since the tap: put it where it would be without the reset
+        for(int i = 0; i < 3; i++)
+        {
+            float p = shift_tap_phase[i] + clock_lfos.clock[i].GetPhase();
+            if(p >= TWOPI_F)
+                p -= TWOPI_F;
+            clock_lfos.clock[i].SetPhase(p);
+        }
+    }
+    clock_lfos.clock[2].SetFreq(tempo.bpm * (1.f / 60.f));
+    shift_tap_pending = false;
 }
 
 // Index with ±0.3 hysteresis (resolution)
@@ -165,8 +206,22 @@ static void AudioCallback(AudioHandle::InputBuffer  in,
 
     interface.ProcessControls();
 
-    if(hw.gates[GATE_CLOCK].Trig() || hw.buttons[BUTTON_SHIFT].RisingEdge())
+    if(hw.gates[GATE_CLOCK].Trig())
+    {
         Tap();
+        shift_tap_pending = false; // a clock tap after it: no longer undoable
+    }
+    if(hw.buttons[BUTTON_SHIFT].RisingEdge())
+    {
+        shift_used_as_modifier = false;
+        ShiftTap();
+    }
+    if(shift_used_as_modifier)
+    {
+        if(shift_tap_pending)
+            UndoShiftTap();
+        shift_used_as_modifier = false;
+    }
 
     // LED phase frequency: one cycle per repetition of each tap
     for(int v = 0; v < kNumVoices; v++)
