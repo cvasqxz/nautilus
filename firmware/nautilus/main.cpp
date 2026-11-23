@@ -67,7 +67,7 @@ struct Settings
     uint8_t free_time     = 0;   // interface.main_page.free_time_
     int     input_mode    = 0;   // engine.input_mode
     float   reverb_amount = 0.f; // engine.reverb_amount
-    uint8_t sonar_scale   = 0;   // sonar_scale (not in the original; checked when loaded)
+    uint8_t sonar_scale   = 0;   // interface.main_page.sonar_scale_ (not in the original)
 
     bool operator!=(const Settings &a) const
     {
@@ -105,11 +105,11 @@ static void TimerCallback(void *data)
     interface.ui.Process();
 }
 
-// Tap tempo: shift or the clock gate. Filters out variations below 2.5 ms. Returns whether
-// it reset the clock phases.
-static bool Tap()
+// Tap tempo: shift or the clock gate. Filters out variations below 2.5 ms.
+// `now`: GetTick() of the tap. `phase`: tempo phase at that moment. `since`: seconds between
+// the tap and this call (shift taps are applied on release, see AudioCallback).
+static void Tap(uint32_t now, float phase, float since)
 {
-    const uint32_t now = System::GetTick();
     const uint32_t us  = (now - tempo.last_us) / (System::GetTickFreq() / 1000000);
     const int32_t  d   = tempo.interval_us - us;
     if(d < -2500 || d > 2500)
@@ -133,56 +133,27 @@ static bool Tap()
                                : (s > sa ? (sb < s ? sb : s) : sa);
     tempo.last_us    = now;
 
-    // Except in the dotted resolutions, resets the phases if they are not at an edge
-    if(engine.time_mult != 0.75f && engine.time_mult != 1.5f
-       && clock_lfos.tempo_phase < 0.95f && clock_lfos.tempo_phase > 0.05f)
-    {
-        clock_lfos.clock[2].SetPhase(0.f);
-        clock_lfos.clock[0].SetPhase(0.f);
-        clock_lfos.clock[1].SetPhase(0.f);
-        clock_lfos.clock[2].SetFreq(tempo.bpm * (1.f / 60.f));
-        return true;
-    }
     clock_lfos.clock[2].SetFreq(tempo.bpm * (1.f / 60.f));
-    return false;
-}
 
-// Shift is both tap tempo and the modifier key. Its tap is taken on the press, so that the
-// timing stays exact, and undone if shift ends up used as a modifier while held (the UI sets
-// shift_used_as_modifier). The original counts every shift press as a tap, so after
-// shift + Resolution, for example, the next tap measured the whole pause.
-volatile bool nautilus::shift_used_as_modifier = false;
-static TempoState shift_tap_saved;       // tempo before the last shift tap
-static float      shift_tap_phase[3];    // clock phases before it (radians)
-static bool       shift_tap_reset   = false; // it reset the clock phases
-static bool       shift_tap_pending = false; // it can still be undone
-
-static void ShiftTap()
-{
-    shift_tap_saved = tempo;
-    for(int i = 0; i < 3; i++)
-        shift_tap_phase[i] = clock_lfos.clock[i].GetPhase();
-    shift_tap_reset   = Tap();
-    shift_tap_pending = true;
-}
-
-static void UndoShiftTap()
-{
-    tempo = shift_tap_saved;
-    if(shift_tap_reset)
+    // Except in the dotted resolutions, resets the phases if they are not at an edge: to 0 at
+    // the moment of the tap, which `since` seconds ago
+    if(engine.time_mult != 0.75f && engine.time_mult != 1.5f && phase < 0.95f && phase > 0.05f)
     {
-        // Each phase ran from 0 since the tap: put it where it would be without the reset
-        for(int i = 0; i < 3; i++)
+        for(auto &clock : clock_lfos.clock)
         {
-            float p = shift_tap_phase[i] + clock_lfos.clock[i].GetPhase();
-            if(p >= TWOPI_F)
-                p -= TWOPI_F;
-            clock_lfos.clock[i].SetPhase(p);
+            const float cycles = clock.GetFreq() * since;
+            clock.SetPhase((cycles - (float)(int)cycles) * TWOPI_F);
         }
     }
-    clock_lfos.clock[2].SetFreq(tempo.bpm * (1.f / 60.f));
-    shift_tap_pending = false;
 }
+
+// Shift is both tap tempo and the modifier key. The original counts every press as a tap, so
+// after shift + Resolution, for example, the next tap measured the whole pause. Here the tap
+// is taken when shift is released, with the time and tempo phase of the press, and only if
+// shift was not used as a modifier meanwhile (the UI sets MainPage::shift_modifier_used_).
+static uint32_t shift_press_tick;
+static float    shift_press_phase;
+static bool     shift_press_valid = false; // no clock tap since the press
 
 // Index with ±0.3 hysteresis (resolution)
 static inline float HysteresisIndex(float x, float prev)
@@ -208,19 +179,23 @@ static void AudioCallback(AudioHandle::InputBuffer  in,
 
     if(hw.gates[GATE_CLOCK].Trig())
     {
-        Tap();
-        shift_tap_pending = false; // a clock tap after it: no longer undoable
+        Tap(System::GetTick(), clock_lfos.tempo_phase, 0.f);
+        shift_press_valid = false;
     }
-    if(hw.buttons[BUTTON_SHIFT].RisingEdge())
+    Switch &shift = hw.buttons[BUTTON_SHIFT];
+    if(shift.RisingEdge())
     {
-        shift_used_as_modifier = false;
-        ShiftTap();
+        shift_press_tick                         = System::GetTick();
+        shift_press_phase                        = clock_lfos.tempo_phase;
+        shift_press_valid                        = true;
+        interface.main_page.shift_modifier_used_ = false;
     }
-    if(shift_used_as_modifier)
+    if(shift.FallingEdge() && shift_press_valid && !interface.main_page.shift_modifier_used_)
     {
-        if(shift_tap_pending)
-            UndoShiftTap();
-        shift_used_as_modifier = false;
+        const uint32_t now = System::GetTick();
+        Tap(shift_press_tick,
+            shift_press_phase,
+            (float)(now - shift_press_tick) / (float)System::GetTickFreq());
     }
 
     // LED phase frequency: one cycle per repetition of each tap
@@ -351,61 +326,6 @@ static void AudioCallback(AudioHandle::InputBuffer  in,
     }
 }
 
-// Sonar output: the original's Stepped Voltage (one equal step per open gate, sized by
-// Sensors), quantized at 1 V/octave to the nearest note of the chosen scale so that it can
-// drive the pitch of an oscillator in tune. The DAC (0..4095) comes out as 0..5 V (manual:
-// "Sonar CV output range: 0V to +5V"): 60 semitones over the full range, 0 V = the root.
-// The original's two clock modes (picked in options.json) are gone.
-static constexpr int kSonarCodesPerVolt = 4095 / 5; // 819 (exact)
-static constexpr int kSonarSemitones    = 5 * 12;   // 60 semitones over the full range
-
-// Shift + Freeze steps through them; the number and colour of each are shown on the Freeze
-// LED (1 = colour 0, ..., 6 = colour 5)
-struct SonarScale
-{
-    uint8_t size;
-    uint8_t degrees[12];
-};
-static constexpr SonarScale kSonarScales[kNumSonarScales] = {
-    {12, {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11}}, // 1 chromatic
-    {7, {0, 2, 4, 5, 7, 9, 11}},                  // 2 major
-    {7, {0, 2, 3, 5, 7, 8, 10}},                  // 3 natural minor
-    {5, {0, 2, 4, 7, 9}},                         // 4 major pentatonic
-    {5, {0, 3, 5, 7, 10}},                        // 5 minor pentatonic
-    {6, {0, 3, 5, 6, 7, 10}},                     // 6 blues
-};
-
-// Nearest note of the scale (the lower one on a tie), as a DAC code
-static uint16_t QuantizeSonar(int value, int scale)
-{
-    const float       st   = value * ((float)kSonarSemitones / 4095.f);
-    const SonarScale &sc   = kSonarScales[scale];
-    const int         oct  = (int)st / 12;
-    int               best = 0;
-    float             dist = 1e9f;
-    for(int o = oct; o <= oct + 1; o++)
-        for(int d = 0; d < sc.size; d++)
-        {
-            const int n = 12 * o + sc.degrees[d];
-            if(n > kSonarSemitones)
-                continue;
-            const float e = n > st ? n - st : st - n;
-            if(e < dist)
-            {
-                dist = e;
-                best = n;
-            }
-        }
-    return (uint16_t)((best * 4095 * 2 + kSonarSemitones) / (kSonarSemitones * 2));
-}
-
-uint8_t  nautilus::sonar_scale      = 0;
-uint32_t nautilus::sonar_scale_time = 0;
-
-// Test page (shift held at power-up): Sonar alternates 1 V and 3 V once per second, two
-// octaves apart, to check the scaling with a tuner or a meter.
-bool nautilus::sonar_octave_test = false;
-
 // @0x240049bc — Sonar output (DAC, 12 bits) and clock phases
 static void DacCallback(uint16_t **out, size_t size)
 {
@@ -459,16 +379,19 @@ static void DacCallback(uint16_t **out, size_t size)
                     value += step;
         if(value > 0xfff)
             value = 0xfff;
-        if(sonar_octave_test)
+        // Test page (shift held at power-up): 1 V and 3 V once per second, two octaves apart,
+        // to check the scaling with a tuner or a meter
+        if(interface.cal_page.IsActive())
             out[0][i] = (System::GetNow() / 1000) & 1 ? 3 * kSonarCodesPerVolt
                                                       : 1 * kSonarCodesPerVolt;
         else
         {
-            if(value != last_value || sonar_scale != last_scale)
+            const int scale = interface.main_page.sonar_scale_;
+            if(value != last_value || scale != last_scale)
             {
                 last_value = value;
-                last_scale = sonar_scale;
-                last_code  = QuantizeSonar(value, sonar_scale);
+                last_scale = scale;
+                last_code  = QuantizeSonar(value, scale);
             }
             out[0][i] = last_code;
         }
@@ -508,7 +431,6 @@ int main(void)
         calibrate = HeldAtBoot(hw.buttons[BUTTON_PURGE]);
 
     interface.Init(&hw, &engine, test_page);
-    sonar_octave_test = test_page;
 
     resolution_hyst = 0.f;
 
@@ -545,7 +467,7 @@ int main(void)
     engine.feedback_mode_pending   = true;
     engine.SetReverbAmount(s.reverb_amount); // the original clamps it to [0, 1] when loading it
     // Settings saved before the field existed have whatever followed them in the sector
-    sonar_scale = s.sonar_scale < kNumSonarScales ? s.sonar_scale : 0;
+    interface.main_page.sonar_scale_ = s.sonar_scale < kNumSonarScales ? s.sonar_scale : 0;
     engine.delay_mode_pending      = true;
 
     hw.seed.StartAudio(AudioCallback);
@@ -576,7 +498,7 @@ int main(void)
             cur.input_level   = engine.input_level;
             cur.free_time     = interface.main_page.free_time_;
             cur.input_mode    = engine.input_mode;
-            cur.sonar_scale   = sonar_scale;
+            cur.sonar_scale   = interface.main_page.sonar_scale_;
             settings_storage.Save();
             last_save = now;
         }

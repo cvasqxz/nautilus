@@ -13,7 +13,7 @@ namespace nautilus
 using namespace daisy;
 
 // Parameter indices. They match the order of the values of
-// "Attenuverter 1/2 Target" in options.json (@0x2400e120).
+// "Attenuverter 1/2 Target" in the original's options.json (@0x2400e120); fixed here.
 enum Param
 {
     PARAM_SENSORS,

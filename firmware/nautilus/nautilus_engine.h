@@ -59,16 +59,7 @@ struct ChromaBank
     TiltSlot tilt[kNumVoices];
 };
 
-// "Mix Mode" in options.json
-enum MixMode
-{
-    MIX_LINEAR,
-    MIX_CONSTANT_POWER,
-    MIX_TRANSITION,
-    MIX_WET_AMOUNT,
-};
-
-// "Reverb Preset" in options.json
+// "Reverb Preset" in the original's options.json (always Normal here)
 enum ReverbPreset
 {
     REVERB_NORMAL,
@@ -97,7 +88,7 @@ enum FeedbackMode
 struct NautilusEngine
 {
     // Requests a delay mode change: Process lowers the level, applies the mode and raises
-    // it again. Transpose Up/Down in options.json and settings loading use it to reapply it.
+    // it again. Settings loading uses it to reapply it.
     // `clear`: clear the buffers when applying it (Delay Mode button with Clear on Mode Change).
     void RequestDelayMode(uint8_t mode, bool clear = false)
     {
@@ -148,7 +139,7 @@ struct NautilusEngine
         write_gain           = 0.f;
         depth                = 0.f;
         feedback             = 0.f;
-        mix                  = 0.f;
+        tilt                 = 0.f;
         buffer_locked_freeze = true;
         reversal_count       = 0.f;
         const float ratios[8] = {4.f, 2.f, 1.5f, 1.f, 0.75f, 0.5f, 0.25f, 0.125f};
@@ -202,7 +193,6 @@ struct NautilusEngine
         pending_feedback_mode = FEEDBACK_NORMAL;
         delay_mode_pending    = false;
         feedback_mode_pending = false;
-        mix_mode              = MIX_LINEAR;
         input_mode            = 0;
         field_1bc0            = 1;
         reverb_lp             = 0.75f;
@@ -291,21 +281,8 @@ struct NautilusEngine
             times_dirty = false;
         }
 
-        // Depth is a bipolar tilt: centre = flat (with a small dead zone so that the pot
-        // can rest there), left = darker repeats, right = thinner repeats
-        float tilt = depth * 2.f - 1.f;
-        if(tilt > -kTiltDeadZone && tilt < kTiltDeadZone)
-            tilt = 0.f;
-        else
-            tilt = (tilt > 0.f ? tilt - kTiltDeadZone : tilt + kTiltDeadZone)
-                   / (1.f - kTiltDeadZone);
-        for(int v = 0; v < kNumVoices; v++)
-        {
-            fb_fx[0].tilt[v].SetTilt(tilt);
-            fb_fx[1].tilt[v].SetTilt(tilt);
-            in_fx[0].tilt[v].SetTilt(tilt);
-            in_fx[1].tilt[v].SetTilt(tilt);
-        }
+        // Depth is a bipolar tilt of the repeats (see tilt.h), smoothed below (~20 ms)
+        const float tilt_target = DepthToTilt(depth);
 
         float feedback_target = feedback_param;
         float dry_target      = dry_param;
@@ -322,7 +299,8 @@ struct NautilusEngine
         {
             if(!buffer_locked_freeze)
                 feedback_target = 1.f;
-            // As the original with mix = 1: only the frozen loop is heard
+            // As the original with mix = 1: only the frozen loop is heard. Both options are
+            // fixed to false since options.json was removed; kept for when they come back.
             if(freeze_always_wet || (freeze_punch_in && wet_target == 0.f))
             {
                 dry_target = 0.f;
@@ -372,6 +350,7 @@ struct NautilusEngine
         float dry_l[128], dry_r[128];
         for(size_t i = 0; i < size; i++)
         {
+            daisysp::fonepole(tilt, tilt_target, 0.001f);
             float in_l, in_r;
             if(ping)
             {
@@ -437,8 +416,8 @@ struct NautilusEngine
             // Input (with its own tilt filter) into the reverse readers
             float a, b;
             RouteInput(in_l, in_r, a, b);
-            const float ca = in_fx[0].tilt[0].Process(a);
-            const float cb = in_fx[1].tilt[0].Process(b);
+            const float ca = in_fx[0].tilt[0].Process(a, tilt);
+            const float cb = in_fx[1].tilt[0].Process(b, tilt);
 
             float xa = ca, xb = cb;
             for(size_t v = 0; v < kNumVoices; v++)
@@ -483,14 +462,14 @@ struct NautilusEngine
                 switch(feedback_mode)
                 {
                     case FEEDBACK_PING_PONG:
-                        oa = fb_fx[0].tilt[v].Process(tap_out[0][v] * level[v]);
-                        ob = fb_fx[1].tilt[v].Process(tap_out[1][v] * level[v]);
+                        oa = fb_fx[0].tilt[v].Process(tap_out[0][v] * level[v], tilt);
+                        ob = fb_fx[1].tilt[v].Process(tap_out[1][v] * level[v], tilt);
                         fa = feedback * ob;
                         fb = feedback * oa;
                         break;
                     case FEEDBACK_CASCADE:
-                        oa = fb_fx[0].tilt[v].Process(tap_out[0][src]);
-                        ob = fb_fx[1].tilt[v].Process(tap_out[1][src]);
+                        oa = fb_fx[0].tilt[v].Process(tap_out[0][src], tilt);
+                        ob = fb_fx[1].tilt[v].Process(tap_out[1][src], tilt);
                         fa = feedback * ob;
                         fb = feedback * oa;
                         oa *= level[v];
@@ -499,13 +478,13 @@ struct NautilusEngine
                     case FEEDBACK_ADRIFT:
                         if(v & 1)
                         {
-                            oa = fb_fx[0].tilt[v].Process(tap_out[1][src]);
-                            ob = fb_fx[1].tilt[v].Process(tap_out[0][src]);
+                            oa = fb_fx[0].tilt[v].Process(tap_out[1][src], tilt);
+                            ob = fb_fx[1].tilt[v].Process(tap_out[0][src], tilt);
                         }
                         else
                         {
-                            oa = fb_fx[0].tilt[v].Process(tap_out[0][src]);
-                            ob = fb_fx[1].tilt[v].Process(tap_out[1][src]);
+                            oa = fb_fx[0].tilt[v].Process(tap_out[0][src], tilt);
+                            ob = fb_fx[1].tilt[v].Process(tap_out[1][src], tilt);
                         }
                         fa = feedback * ob;
                         fb = feedback * oa;
@@ -513,8 +492,8 @@ struct NautilusEngine
                         ob *= level[v];
                         break;
                     default:
-                        oa = fb_fx[0].tilt[v].Process(tap_out[0][v] * level[v]);
-                        ob = fb_fx[1].tilt[v].Process(tap_out[1][v] * level[v]);
+                        oa = fb_fx[0].tilt[v].Process(tap_out[0][v] * level[v], tilt);
+                        ob = fb_fx[1].tilt[v].Process(tap_out[1][v] * level[v], tilt);
                         fa = feedback * oa;
                         fb = feedback * ob;
                         break;
@@ -652,11 +631,9 @@ struct NautilusEngine
         }
     }
 
-    // Dry/wet mix at the output, with a one-block ramp. The wet term goes first: GCC
-    // contracts the first product into an FMA, and the original fuses out·mix (not the dry);
-    // with the other order the output differs by 1 ULP in some samples.
-    // Mix (dry level) and Chroma (wet level) are two independent faders. The original
-    // crossfades both with Mix, by "Mix Mode" in options.json, which is now ignored.
+    // Dry/wet mix at the output, with a one-block ramp. Mix (dry level) and Chroma (wet level)
+    // are two independent faders; the original crossfades both with Mix, by "Mix Mode" in its
+    // options.json. Local copies: the stores to out may alias the members.
     void Mix(float      **out,
              size_t       size,
              float        dry_target,
@@ -667,13 +644,17 @@ struct NautilusEngine
         const float n       = (float)(int)size;
         const float dry_inc = (dry_target - dry_gain) / n;
         const float wet_inc = (wet_target - wet_gain) / n;
+        const float level   = input_level;
+        float       dry = dry_gain, wet = wet_gain;
         for(size_t i = 0; i < size; i++)
         {
-            dry_gain += dry_inc;
-            wet_gain += wet_inc;
-            out[0][i] = out_l[i] * wet_gain + dry_l[i] * input_level * dry_gain;
-            out[1][i] = out_r[i] * wet_gain + dry_r[i] * input_level * dry_gain;
+            dry += dry_inc;
+            wet += wet_inc;
+            out[0][i] = out_l[i] * wet + dry_l[i] * level * dry;
+            out[1][i] = out_r[i] * wet + dry_r[i] * level * dry;
         }
+        dry_gain = dry;
+        wet_gain = wet;
     }
 
     void ProcessReverb(float **out, size_t size)
@@ -708,18 +689,27 @@ struct NautilusEngine
         // diffusion, and ~0.5 s for the decay time, so the tail fades instead of stopping.
         constexpr float kMixCoeff  = 4.2e-4f; // 1 - exp(-1 / (0.05 s * 48 kHz))
         constexpr float kTimeCoeff = 4.2e-5f; // 1 - exp(-1 / (0.5 s * 48 kHz))
+        // Local copies: the reverb's float stores (buffer and out) may alias the members
+        float       amount = reverb_amount_cur, lp = reverb_lp_cur;
+        float       diff = reverb_diffusion_cur, time = reverb_time_cur;
+        const float amount_t = reverb_amount, lp_t = reverb_lp;
+        const float diff_t = reverb_diffusion, time_t = reverb_time;
         for(size_t i = 0; i < size; i++)
         {
-            reverb_amount_cur += kMixCoeff * (reverb_amount - reverb_amount_cur);
-            reverb_lp_cur += kMixCoeff * (reverb_lp - reverb_lp_cur);
-            reverb_diffusion_cur += kMixCoeff * (reverb_diffusion - reverb_diffusion_cur);
-            reverb_time_cur += kTimeCoeff * (reverb_time - reverb_time_cur);
-            reverb.set_amount(reverb_amount_cur);
-            reverb.set_time(reverb_time_cur);
-            reverb.set_lp(reverb_lp_cur);
-            reverb.set_diffusion(reverb_diffusion_cur);
+            daisysp::fonepole(amount, amount_t, kMixCoeff);
+            daisysp::fonepole(lp, lp_t, kMixCoeff);
+            daisysp::fonepole(diff, diff_t, kMixCoeff);
+            daisysp::fonepole(time, time_t, kTimeCoeff);
+            reverb.set_amount(amount);
+            reverb.set_time(time);
+            reverb.set_lp(lp);
+            reverb.set_diffusion(diff);
             reverb.Process(&out[0][i], &out[1][i]);
         }
+        reverb_amount_cur    = amount;
+        reverb_lp_cur        = lp;
+        reverb_diffusion_cur = diff;
+        reverb_time_cur      = time;
     }
 
     // @0x24009ca8 (ctor): ratio_ is copied from .rodata 0x2402d284
@@ -746,7 +736,7 @@ struct NautilusEngine
     float    time_mult;                // +0x15c resolution (tempo multiplier)
     float    depth;                    // +0x160 Depth: tilt of the feedback (0.5 = flat)
     float    feedback;                 // +0x164 smoothed
-    float    mix;                      // +0x168 smoothed (per-block ramp)
+    float    tilt;                     // +0x168 smoothed tilt of Depth (mix in the original)
     float    wet_gain;                 // +0x16c
     float    dry_gain;                 // +0x170
     bool     frozen;                   // +0x174
@@ -773,7 +763,7 @@ struct NautilusEngine
     int      ratio_row;                // +0x1be8 row of ratio_ (1..4; any other value → 0)
     uint8_t  delay_mode;               // +0x1bec DelayMode (Settings)
     uint8_t  pad_1bed[0x3];
-    int      mix_mode;                 // +0x1bf0 MixMode
+    int      mix_mode;                 // +0x1bf0 unused (Mix Mode of options.json in the original)
     int      input_mode;               // +0x1bf4 0 stereo, 1 mono: the manual's "Summed Mono" (Settings)
     bool     times_dirty;              // +0x1bf8
     bool     purge_request;            // +0x1bf9

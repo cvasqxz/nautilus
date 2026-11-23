@@ -8,13 +8,14 @@
 #include "nautilus_hw.h"
 #include "nautilus_engine.h"
 #include "clock_lfos.h"
+#include "sonar.h"
 
 namespace nautilus
 {
 using namespace daisy;
 using daisysp::fclamp;
 
-static constexpr int kNumColors = 6; // "Color 0".."Color 5" in options.json
+static constexpr int kNumColors = 6; // the original could change them in options.json
 
 // Main page. Vtable 0x2402dcf4.
 class MainPage : public UiPage
@@ -35,12 +36,15 @@ class MainPage : public UiPage
     uint32_t        time_mult_time_;         // +0x20 time of the last change of resolution
     uint32_t        sensors_moved_time_;     // +0x24 time of the last movement of pot 0
     uint32_t        resolution_moved_time_;  // +0x28 time of the last movement of pot 2
-    bool            usb_busy_;               // +0x2c USB stick busy (unused: there is no USB)
-    uint8_t         pad_2d[0x3];             // +0x2d TODO(recon)
+    uint32_t        sonar_scale_time_;       // +0x2c time of the last scale change (usb_busy_ and
+                                             // padding in the original, which had USB)
     uint32_t        reset_time_;             // +0x30 time of Shift + Purge
     bool            saved_f8_changed_;       // +0x34 shift + pot 8
     uint8_t         free_time_;              // +0x35 shift + Delay Mode: "Freerunning Delay" (Settings)
-    uint8_t         pad_36[0x2];
+    uint8_t         sonar_scale_;            // +0x36 Sonar quantizer scale (Settings), padding
+                                             // in the original
+    volatile bool   shift_modifier_used_;    // +0x37 shift used as a modifier while held: its
+                                             // tap is not taken (AudioCallback); padding before
     Color           colors_[kNumColors];     // +0x38
 };
 
@@ -90,7 +94,7 @@ struct Interface
 #pragma GCC diagnostic ignored "-Winvalid-offsetof"
 static_assert(offsetof(MainPage, hw_) == 0x08, "layout");
 static_assert(offsetof(MainPage, sensors_moved_time_) == 0x24, "layout");
-static_assert(offsetof(MainPage, usb_busy_) == 0x2c, "layout");
+static_assert(offsetof(MainPage, sonar_scale_time_) == 0x2c, "layout");
 static_assert(offsetof(MainPage, free_time_) == 0x35, "layout");
 static_assert(offsetof(MainPage, colors_) == 0x38, "layout");
 static_assert(sizeof(MainPage) == 0x80, "layout");
@@ -106,14 +110,6 @@ static_assert(sizeof(Interface) == 0x9cc, "layout");
 extern NautilusHw hw;
 extern float      meter_l, meter_r;
 extern float      out_env_l, out_env_r;
-extern bool       sonar_octave_test; // Sonar alternates 1 V / 3 V while the test page is open
-// Set when shift is held and used as a modifier: AudioCallback undoes its tap
-extern volatile bool shift_used_as_modifier;
-// Scale of the Sonar quantizer (see kSonarScales in main.cpp): shift + Freeze picks the next
-// one; the Freeze LED blinks its number in its colour (colors_[scale]).
-static constexpr int kNumSonarScales = 6;
-extern uint8_t       sonar_scale;
-extern uint32_t      sonar_scale_time; // System::GetNow() of the last change
 
 // LED canvas: the UI clears and flushes the PCA9685 buffer
 // @0x240047b8 (clearFunction)
@@ -142,7 +138,7 @@ bool MainPage::OnPotMoved(uint16_t potID, float newPosition)
             res_prev              = newPosition;
             if(shift)
             {
-                shift_used_as_modifier = true;
+                shift_modifier_used_ = true;
                 // The original sets the amount to the pot position, so touching the pot
                 // jumped from the current amount to wherever the pot was. Here the movement
                 // is scaled from the current amount towards the end the pot is turning to:
@@ -172,7 +168,7 @@ bool MainPage::OnPotMoved(uint16_t potID, float newPosition)
         case KNOB_ATTENUVERTER_1:
             if(shift)
             {
-                shift_used_as_modifier = true;
+                shift_modifier_used_ = true;
                 // Detent at 0.95..1.05 → exactly 1.0. GCC moves the comparison onto newPosition
                 // (0.18666667 and 0.21333332 in the binary) and computes the formula first.
                 engine_->input_level = newPosition * 3.75f + 0.25f;
@@ -204,7 +200,7 @@ bool MainPage::OnButton(uint16_t buttonID,
     const bool shift = hw_->buttons[BUTTON_SHIFT].Pressed();
     // Any other button with shift held is a shift combination: shift was not a tap
     if(shift && buttonID != BUTTON_SHIFT)
-        shift_used_as_modifier = true;
+        shift_modifier_used_ = true;
     if(numberOfPresses == 1)
     {
         switch(buttonID)
@@ -215,8 +211,8 @@ bool MainPage::OnButton(uint16_t buttonID,
                 {
                     // Shift + Freeze: next scale of the Sonar quantizer (the original
                     // ignores shift here and toggles the freeze)
-                    sonar_scale      = (sonar_scale + 1) % kNumSonarScales;
-                    sonar_scale_time = System::GetNow();
+                    sonar_scale_      = (sonar_scale_ + 1) % kNumSonarScales;
+                    sonar_scale_time_ = System::GetNow();
                     break;
                 }
                 NautilusEngine *e = engine_;
@@ -319,7 +315,7 @@ void MainPage::Draw(const UiCanvasDescriptor &canvas)
     {
         // Shift: alternate button functions
         // Freeze LED: colour of the current Sonar scale (the original: dim white)
-        hw_->SetColor(0, colors_[sonar_scale] * 0.5f);
+        hw_->SetColor(0, colors_[sonar_scale_] * 0.5f);
         hw_->SetColor(3, Color(0.7f, 1.f, 1.f) * ((System::GetNow() & 0x1ff) < 255 ? 0.5f : 0.f));
         hw_->SetColor(2, engine_->input_mode == 0 ? colors_[0] : colors_[1]);
         hw_->SetColor(1, free_time_ == 0 ? colors_[0] : colors_[1]);
@@ -340,7 +336,7 @@ void MainPage::Draw(const UiCanvasDescriptor &canvas)
             hw_->SetRgb(3, 0.f, 0.f, 0.f);
     }
 
-    // Output meters: gradient from the base color to the Chroma mode color according to depth
+    // Output meters: gradient by level, tinted by the tilt of Depth (see below)
     meter_l += (out_env_l * out_env_l * 4.f - meter_l) * 0.25f;
     meter_r += (out_env_r * out_env_r * 4.f - meter_r) * 0.25f;
     int   n_l, n_r;
@@ -370,8 +366,8 @@ void MainPage::Draw(const UiCanvasDescriptor &canvas)
     const uint8_t leds_r[4]        = {11, 10, 9, 8};
     // The original tinted the meters with the colour of the Chroma mode, by Depth. Here they
     // go from colour 1 (flat) towards colour 3 (darker repeats) or colour 2 (thinner ones).
-    const float   tilt = engine_->fb_fx[0].tilt[0].GetTilt();
-    const float   amt  = tilt < 0.f ? -tilt : tilt;
+    const float   tilt = DepthToTilt(engine_->depth);
+    const float   amt  = fabsf(tilt);
     Color         grad[4];
     grad[3] = Color::Blend(colors_[1], tilt < 0.f ? colors_[3] : colors_[2], amt);
     grad[0] = Color::Blend(colors_[1], grad[3], amt * 0.75f);
@@ -461,10 +457,10 @@ void MainPage::Draw(const UiCanvasDescriptor &canvas)
     // Sonar scale changed: the Freeze LED blinks N times (N = scale number, 1..6) in the
     // scale's colour, 150 ms on / 150 ms off
     {
-        const uint32_t t = now - sonar_scale_time;
-        const uint32_t n = sonar_scale + 1u;
-        if(sonar_scale_time != 0 && t < n * 300u)
-            hw_->SetColor(0, (t % 300u) < 150u ? colors_[sonar_scale] : Color());
+        const uint32_t t = now - sonar_scale_time_;
+        const uint32_t n = sonar_scale_ + 1u;
+        if(sonar_scale_time_ != 0 && t < n * 300u)
+            hw_->SetColor(0, (t % 300u) < 150u ? colors_[sonar_scale_] : Color());
     }
 
     // Test ping: a quarter of the tempo pulse per LED pair
@@ -490,7 +486,6 @@ bool CalPage::OnButton(uint16_t buttonID,
     if(buttonID == BUTTON_PURGE)
     {
         engine_->ResetModes();
-        sonar_octave_test = false;
         Close();
     }
     return false;
@@ -553,8 +548,8 @@ void Interface::Init(NautilusHw *hw_, NautilusEngine *engine_, bool test_page)
     pot_backend.hw = hw;
     pots.Init(queue, pot_backend, 250, 1.f / 512.f, 1.f / 256.f);
 
-    // Default colors (can be changed with "Color N" in options.json). Written with the same
-    // conversion as options.json, so "#rrggbb" there gives exactly the same color.
+    // Default colors, written as "#rrggbb" / 255 (the original could change them with
+    // "Color N" in options.json).
     // The original used (0, 0, 1), (0, 1, 0), (0.92, 0.764, 0.2), (0.61, 0.2, 0.92),
     // (0, 1, 1) and (1, 0, 0).
     constexpr float k = 1.f / 255.f;
@@ -564,7 +559,9 @@ void Interface::Init(NautilusHw *hw_, NautilusEngine *engine_, bool test_page)
     main_page.colors_[3] = Color(0xab * k, 0x85 * k, 0xff * k); // #ab85ff
     main_page.colors_[4] = Color(0xf0 * k, 0xd2 * k, 0xd1 * k); // #f0d2d1
     main_page.colors_[5] = Color(0xf6 * k, 0x10 * k, 0x67 * k); // #f61067
-    main_page.usb_busy_  = false;
+    main_page.sonar_scale_time_   = 0;
+    main_page.sonar_scale_        = 0;
+    main_page.shift_modifier_used_ = false;
     main_page.free_time_ = 0;
     main_page.hw_        = hw;
     cal_page.hw_         = hw;

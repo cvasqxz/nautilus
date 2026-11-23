@@ -1,45 +1,55 @@
-// Tilt filter for the feedback path. Replaces Chroma (chroma.h): Depth at the centre leaves
-// the repeats untouched, turning it left makes every repeat darker and turning it right
-// makes every repeat thinner. It sits where each Chroma sat (one per voice in the feedback,
-// one per channel at the input of the reverse readers), so the tilt builds up on every
-// pass through the delay.
+// Tilt filter for the feedback path. Replaces Chroma (chroma.h, kept for reference but not
+// built): Depth at the centre leaves the repeats untouched, turning it left makes every
+// repeat darker and turning it right makes every repeat thinner. It sits where each Chroma
+// sat (one per voice in the feedback, one per channel at the input of the reverse readers),
+// so the tilt builds up on every pass through the delay.
 #pragma once
 
 #include <stdint.h>
-#include "chroma.h" // RationalTanh
 #include "daisysp.h"
 
 namespace nautilus
 {
 using daisysp::fclamp;
 
+// x·(x²+27)/(9x²+27): rational approximation of tanh (Chroma's soft clip)
+inline float RationalTanh(float x)
+{
+    const float x2 = x * x;
+    return (x2 + 27.f) * x / (x2 * 9.f + 27.f);
+}
+
 // Half-width of the flat zone around the centre of Depth (in tilt units, -1..1)
 constexpr float kTiltDeadZone = 0.04f;
+
+// Depth (0..1) to tilt: -1 = darkest, 0 = flat (with a small dead zone so that the pot can
+// rest there), +1 = brightest
+inline float DepthToTilt(float depth)
+{
+    const float t = depth * 2.f - 1.f;
+    if(t > -kTiltDeadZone && t < kTiltDeadZone)
+        return 0.f;
+    return fclamp((t > 0.f ? t - kTiltDeadZone : t + kTiltDeadZone) / (1.f - kTiltDeadZone),
+                  -1.f,
+                  1.f);
+}
 
 class Tilt
 {
   public:
     void Init()
     {
-        tilt_          = 0.f;
-        tilt_smoothed_ = 0.f;
-        lp_            = 0.f;
-        saturate       = false;
+        lp_      = 0.f;
+        saturate = false;
     }
 
-    // -1 = darkest, 0 = flat, +1 = brightest
-    void  SetTilt(float t) { tilt_ = fclamp(t, -1.f, 1.f); }
-    float GetTilt() const { return tilt_; }
-
-    float Process(float in)
+    // `t`: tilt, already smoothed by the engine (the same for every instance)
+    float Process(float in, float t)
     {
         // The soft clip of Chroma (Saturation option) is kept as it was
         const float x = saturate ? fclamp(RationalTanh(in), -1.8f, 1.8f) : in;
-
-        tilt_smoothed_ += (tilt_ - tilt_smoothed_) * 0.001f; // ~20 ms
-        lp_ += kSplit * (x - lp_);
+        daisysp::fonepole(lp_, x, kSplit);
         const float lo = lp_, hi = x - lp_;
-        const float t  = tilt_smoothed_;
         // lo + hi == x, so with the tilt at 0 the signal passes unchanged
         return t < 0.f ? lo + hi * (1.f + t) : lo * (1.f - t) + hi;
     }
@@ -50,8 +60,6 @@ class Tilt
     // One-pole split at ~640 Hz (48 kHz): below it is "low", above it "high"
     static constexpr float kSplit = 0.08f;
 
-    float tilt_;
-    float tilt_smoothed_;
     float lp_;
 };
 

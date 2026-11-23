@@ -37,8 +37,9 @@ path `../../libs/coreJSON/source/core_json.c` in a coreJSON assert.
 | `nautilus_engine.h` | DSP engine: voices, delay and feedback modes, purge, mix and reverb routing |
 | `pitch_tap.h` | Delay tap with pitch shift (Shimmer / De-Shimmer) |
 | `reverser.h` | Reverse reader |
-| `chroma.h` | Chroma effects of the original (on dev only `RationalTanh` is used) |
+| `chroma.h` | Chroma effects of the original (kept for reference; not built on dev) |
 | `tilt.h` | Tilt filter in the feedback path (dev, replaces Chroma) |
+| `sonar.h` | Scales and quantizer of the Sonar output (dev) |
 | `freeze_looper.h` | Looper for the "Buffer Locked Freeze" |
 | `reverb.h` | Reverb, ported from Mutable Instruments Rings |
 | `clock_lfos.h` | Clock phases for the Sonar output and the LEDs |
@@ -80,7 +81,7 @@ against the official binary: the output may only differ where the change is mean
 | No USB drive, no `options.json` | The original reads its options from `options.json` on a USB stick at every mount and keeps them only until power-off. The USB host, FatFS and the JSON parser are gone; every option keeps its default value (Transpose Up/Down 12, Reverb Preset Normal, Freeze Mix Behavior Normal, Quantize Freeze on, Buffer Locked Freeze on, Clear on Mode Change off, Continuous Purge off, attenuverters on Dispersal and Feedback, default colours). Firmware updates still go through the Daisy bootloader over USB DFU. |
 | Sonar quantized to 1 V/octave | The original's Stepped Voltage adds one equal step per open gate (5 V / (2 × Sensors)), so most levels fall between notes. Here the same voltage is quantized to the nearest note of a scale (0 V = root, 60 semitones over 0..5 V), so it can drive an oscillator's pitch in tune; the sequence and the range stay the same. Shift + Freeze steps through six scales (chromatic, major, natural minor, major pentatonic, minor pentatonic, blues), saved with the settings; the Freeze LED blinks the scale number in its colour, and shows that colour while shift is held. The DAC code assumes 0..4095 = 0..5 V (the manual's range). The two clock modes, picked in `options.json`, are gone. |
 | Octave check on the test page | While the input test page is open (shift held at power-up), Sonar alternates 1 V and 3 V once per second, two octaves apart, to check the output scaling with a tuner or a meter. |
-| Shift combinations are not taps | Shift is both tap tempo and the modifier key, and the original counts every shift press as a tap: after shift + Resolution, the next tap measured the whole pause and the tempo jumped. Here the tap is still taken on the press, and undone (tempo and clock phases) if shift is used as a modifier while held: any other button, or Resolution or attenuverter 1. |
+| Shift combinations are not taps | Shift is both tap tempo and the modifier key, and the original counts every shift press as a tap: after shift + Resolution, the next tap measured the whole pause and the tempo jumped. Here the shift tap is applied when shift is released, with the time and tempo phase of the press, and only if shift was not used as a modifier meanwhile (any other button, or Resolution or attenuverter 1). Clock In taps are unchanged. |
 | Unused oscilloscope FIFOs removed | Two `FIFO<float, 16000>` that nothing reads (~125 KB of AXI SRAM); they make room for the `float` reverb buffer |
 
 With these changes the globals no longer sit at the original addresses.
