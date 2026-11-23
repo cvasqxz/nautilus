@@ -157,13 +157,9 @@ bool MainPage::OnPotMoved(uint16_t potID, float newPosition)
         case PARAM_DEPTH: hw_->params[PARAM_DEPTH].knob = newPosition; break;
         case PARAM_FEEDBACK: hw_->params[PARAM_FEEDBACK].knob = newPosition; break;
         case PARAM_MIX: hw_->params[PARAM_MIX].knob = newPosition; break;
-        case PARAM_CHROMA:
-            if(shift)
-                // "LED Dimmer". The manual says they turn off at the left; the minimum is 15 %
-                hw_->brightness = fclamp(newPosition, 0.15f, 1.f);
-            else
-                hw_->params[PARAM_CHROMA].knob = newPosition;
-            break;
+        // Chroma is the wet level. The original used it with shift as the "LED Dimmer"
+        // (hw_->brightness); here the brightness stays at its full value.
+        case PARAM_CHROMA: hw_->params[PARAM_CHROMA].knob = newPosition; break;
         case KNOB_ATTENUVERTER_1:
             if(shift)
             {
@@ -350,10 +346,13 @@ void MainPage::Draw(const UiCanvasDescriptor &canvas)
 
     const uint8_t leds_l[4]        = {6, 5, 4, 7};
     const uint8_t leds_r[4]        = {11, 10, 9, 8};
-    const int     chroma_color[6] = {0, 1, 3, 2, 4, 5};
+    // The original tinted the meters with the colour of the Chroma mode, by Depth. Here they
+    // go from colour 1 (flat) towards colour 3 (darker repeats) or colour 2 (thinner ones).
+    const float   tilt = engine_->fb_fx[0].tilt[0].GetTilt();
+    const float   amt  = tilt < 0.f ? -tilt : tilt;
     Color         grad[4];
-    grad[3] = colors_[chroma_color[engine_->fb_fx[0].chroma[0].mode]];
-    grad[0] = Color::Blend(colors_[1], grad[3], hw.params[PARAM_DEPTH].Value() * 0.75f);
+    grad[3] = Color::Blend(colors_[1], tilt < 0.f ? colors_[3] : colors_[2], amt);
+    grad[0] = Color::Blend(colors_[1], grad[3], amt * 0.75f);
     grad[1] = Color::Blend(grad[0], grad[3], 0.33f);
     grad[2] = Color::Blend(grad[0], grad[3], 0.66f);
     for(int i = 0; i < n_l; i++)

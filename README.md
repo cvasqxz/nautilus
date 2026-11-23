@@ -79,6 +79,9 @@ against the official binary: the output may only differ where the change is mean
 | Reverb LFOs without `cosf()` | The original calls `cosf()` twice per sample for the two delay modulation LFOs, and their phase runs about 3 % fast. Here they are quadrature oscillators (one rotation per sample) at the nominal 0.5 and 0.3 Hz. |
 | Smooth reverb amount changes | The original ramps the reverb parameters over one block (2.7 ms), and the decay time is tied to the amount, so turning it down cut the tail already playing. Here the mix, filter and diffusion follow ~50 ms one-pole filters and the decay time a ~0.5 s one. |
 | Shift + Resolution picks up the reverb amount | The original sets the amount to the pot position, so touching the pot with shift held jumped from the current amount to wherever Resolution was. Here the movement is scaled from the current amount towards the end the pot turns to: no jump, and the pot ends still give 0 and 1. |
+| Depth is a bipolar tilt filter instead of Chroma | Chroma (six effects picked with the Chroma pot, amount with Depth) is gone. Depth at the centre leaves the repeats untouched; to the left every repeat gets darker, to the right thinner, building up on each pass through the feedback. The meter LEDs go from colour 1 towards colour 3 (darker) or colour 2 (thinner). |
+| Mix and Chroma are dry and wet levels | The original crossfades dry and wet with Mix, by "Mix Mode" in `options.json` (now ignored). Here Mix sets the dry level and Chroma the wet level, independently; both at 12 o'clock sound like the original's linear mix at the centre. The freeze options still force a fully wet output. |
+| No LED dimmer | Shift + Chroma no longer sets the LED brightness, which stays at its full value. |
 | Unused oscilloscope FIFOs removed | Two `FIFO<float, 16000>` that nothing reads (~125 KB of AXI SRAM); they make room for the `float` reverb buffer |
 
 With these changes the globals no longer sit at the original addresses.

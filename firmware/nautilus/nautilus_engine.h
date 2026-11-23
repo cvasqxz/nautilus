@@ -4,8 +4,9 @@
 //
 // Each channel (A = left, B = right) has 4 voices. Each voice is a delay tap with
 // pitch shift (PitchTap) and a reverse reader (Reverser) that share the input; the
-// feedback goes through one Chroma per voice. Then come DcBlock, the limiter, the
-// "Buffer Locked Freeze" looper, the dry/wet mix and the reverb.
+// feedback goes through one tilt filter per voice (Chroma in the original, see tilt.h). Then
+// come DcBlock, the limiter, the "Buffer Locked Freeze" looper, the dry/wet mix and the
+// reverb.
 #pragma once
 
 #include <stddef.h>
@@ -13,7 +14,7 @@
 #include <string.h>
 #include "daisysp.h"
 #include "pitch_tap.h"
-#include "chroma.h"
+#include "tilt.h"
 #include "reverb.h"
 #include "reverser.h"
 #include "freeze_looper.h"
@@ -52,10 +53,10 @@ struct TapBank
     PitchTap tap[kNumVoices];
 };
 
-// One Chroma per voice
+// One tilt filter per voice (each in the place of the original's Chroma)
 struct ChromaBank
 {
-    Chroma chroma[kNumVoices];
+    TiltSlot tilt[kNumVoices];
 };
 
 // "Mix Mode" in options.json
@@ -160,11 +161,11 @@ struct NautilusEngine
         limiter[0].Init();
         limiter[1].Init();
         voice_len      = 960000;
-        mix_param      = 0.f;
+        dry_param      = 0.f;
         feedback_param = 0.f;
         reversal       = 0.f;
         dispersal      = 0.f;
-        field_1bb4     = 0.f;
+        wet_param      = 0.f;
 
         // Per voice: 2·voice_len samples (tap and reverse reader) in each channel
         for(int v = 0; v < kNumVoices; v++)
@@ -175,10 +176,10 @@ struct NautilusEngine
             reader[0][v].Init(a + voice_len, voice_len);
             taps[1].tap[v].Init(b, voice_len, sample_rate);
             reader[1][v].Init(b + voice_len, voice_len);
-            fb_fx[0].chroma[v].Init(sample_rate);
-            fb_fx[1].chroma[v].Init(sample_rate);
-            in_fx[0].chroma[v].Init(sample_rate);
-            in_fx[1].chroma[v].Init(sample_rate);
+            fb_fx[0].tilt[v].Init();
+            fb_fx[1].tilt[v].Init();
+            in_fx[0].tilt[v].Init();
+            in_fx[1].tilt[v].Init();
             level[v]     = 0.f;
             revmix[0][v] = 0.f;
             revmix[1][v] = 0.f;
@@ -259,17 +260,6 @@ struct NautilusEngine
         times_dirty = true;
     }
 
-    // @0x2400cef4: AudioCallback calls it on every block with (int)(chroma·6 − 0.5)
-    void SetChromaMode(int mode)
-    {
-        for(int s = 0; s < 2; s++)
-            for(int v = 0; v < kNumVoices; v++)
-            {
-                fb_fx[s].chroma[v].SetMode(mode);
-                in_fx[s].chroma[v].SetMode(mode);
-            }
-    }
-
     // @0x24009f0c
     void Process(const float *const *in, float **out, size_t size)
     {
@@ -301,16 +291,25 @@ struct NautilusEngine
             times_dirty = false;
         }
 
+        // Depth is a bipolar tilt: centre = flat (with a small dead zone so that the pot
+        // can rest there), left = darker repeats, right = thinner repeats
+        float tilt = depth * 2.f - 1.f;
+        if(tilt > -kTiltDeadZone && tilt < kTiltDeadZone)
+            tilt = 0.f;
+        else
+            tilt = (tilt > 0.f ? tilt - kTiltDeadZone : tilt + kTiltDeadZone)
+                   / (1.f - kTiltDeadZone);
         for(int v = 0; v < kNumVoices; v++)
         {
-            fb_fx[0].chroma[v].SetAmount(depth);
-            fb_fx[1].chroma[v].SetAmount(depth);
-            in_fx[0].chroma[v].SetAmount(depth);
-            in_fx[1].chroma[v].SetAmount(depth);
+            fb_fx[0].tilt[v].SetTilt(tilt);
+            fb_fx[1].tilt[v].SetTilt(tilt);
+            in_fx[0].tilt[v].SetTilt(tilt);
+            in_fx[1].tilt[v].SetTilt(tilt);
         }
 
         float feedback_target = feedback_param;
-        float mix_target      = mix_param;
+        float dry_target      = dry_param;
+        float wet_target      = wet_param;
         if(!quantize_freeze && freeze_request)
         {
             frozen = true;
@@ -323,10 +322,12 @@ struct NautilusEngine
         {
             if(!buffer_locked_freeze)
                 feedback_target = 1.f;
-            if(freeze_always_wet)
-                mix_target = 1.f;
-            else if(freeze_punch_in && mix_target == 0.f)
-                mix_target = 1.f;
+            // As the original with mix = 1: only the frozen loop is heard
+            if(freeze_always_wet || (freeze_punch_in && wet_target == 0.f))
+            {
+                dry_target = 0.f;
+                wet_target = 1.f;
+            }
         }
 
         const bool cascade = feedback_mode == FEEDBACK_CASCADE || feedback_mode == FEEDBACK_ADRIFT;
@@ -433,11 +434,11 @@ struct NautilusEngine
                 feedback_mode_pending = false;
             }
 
-            // Input (with its own Chroma) into the reverse readers
+            // Input (with its own tilt filter) into the reverse readers
             float a, b;
             RouteInput(in_l, in_r, a, b);
-            const float ca = in_fx[0].chroma[0].Process(a);
-            const float cb = in_fx[1].chroma[0].Process(b);
+            const float ca = in_fx[0].tilt[0].Process(a);
+            const float cb = in_fx[1].tilt[0].Process(b);
 
             float xa = ca, xb = cb;
             for(size_t v = 0; v < kNumVoices; v++)
@@ -466,7 +467,7 @@ struct NautilusEngine
                 xb = cb * cascade_gain;
             }
 
-            // Feedback: Chroma per voice and write into the tap buffer
+            // Feedback: tilt filter per voice and write into the tap buffer
             float sum_a = 0.f, sum_b = 0.f;
             for(size_t v = 0; v < kNumVoices; v++)
             {
@@ -475,21 +476,21 @@ struct NautilusEngine
                 if(v > 0 && cascade)
                     ia = ib = 0.f;
 
-                // Source of each Chroma by mode. Ping Pong, Cascade and Adrift cross
+                // Source of each tilt filter by mode. Ping Pong, Cascade and Adrift cross
                 // the feedback between channels; Cascade and Adrift also chain voices.
                 const int src = v == 0 ? kNumVoices - 1 : v - 1;
                 float     oa, ob, fa, fb;
                 switch(feedback_mode)
                 {
                     case FEEDBACK_PING_PONG:
-                        oa = fb_fx[0].chroma[v].Process(tap_out[0][v] * level[v]);
-                        ob = fb_fx[1].chroma[v].Process(tap_out[1][v] * level[v]);
+                        oa = fb_fx[0].tilt[v].Process(tap_out[0][v] * level[v]);
+                        ob = fb_fx[1].tilt[v].Process(tap_out[1][v] * level[v]);
                         fa = feedback * ob;
                         fb = feedback * oa;
                         break;
                     case FEEDBACK_CASCADE:
-                        oa = fb_fx[0].chroma[v].Process(tap_out[0][src]);
-                        ob = fb_fx[1].chroma[v].Process(tap_out[1][src]);
+                        oa = fb_fx[0].tilt[v].Process(tap_out[0][src]);
+                        ob = fb_fx[1].tilt[v].Process(tap_out[1][src]);
                         fa = feedback * ob;
                         fb = feedback * oa;
                         oa *= level[v];
@@ -498,13 +499,13 @@ struct NautilusEngine
                     case FEEDBACK_ADRIFT:
                         if(v & 1)
                         {
-                            oa = fb_fx[0].chroma[v].Process(tap_out[1][src]);
-                            ob = fb_fx[1].chroma[v].Process(tap_out[0][src]);
+                            oa = fb_fx[0].tilt[v].Process(tap_out[1][src]);
+                            ob = fb_fx[1].tilt[v].Process(tap_out[0][src]);
                         }
                         else
                         {
-                            oa = fb_fx[0].chroma[v].Process(tap_out[0][src]);
-                            ob = fb_fx[1].chroma[v].Process(tap_out[1][src]);
+                            oa = fb_fx[0].tilt[v].Process(tap_out[0][src]);
+                            ob = fb_fx[1].tilt[v].Process(tap_out[1][src]);
                         }
                         fa = feedback * ob;
                         fb = feedback * oa;
@@ -512,8 +513,8 @@ struct NautilusEngine
                         ob *= level[v];
                         break;
                     default:
-                        oa = fb_fx[0].chroma[v].Process(tap_out[0][v] * level[v]);
-                        ob = fb_fx[1].chroma[v].Process(tap_out[1][v] * level[v]);
+                        oa = fb_fx[0].tilt[v].Process(tap_out[0][v] * level[v]);
+                        ob = fb_fx[1].tilt[v].Process(tap_out[1][v] * level[v]);
                         fa = feedback * oa;
                         fb = feedback * ob;
                         break;
@@ -552,7 +553,7 @@ struct NautilusEngine
             memcpy(out_r, wet_r, size * sizeof(float));
         }
 
-        Mix(out, size, mix_target, dry_l, dry_r);
+        Mix(out, size, dry_target, wet_target, dry_l, dry_r);
         ProcessReverb(out, size);
 
         if(purge_request && purge_level < 0.0003f)
@@ -590,10 +591,10 @@ struct NautilusEngine
     {
         for(int v = 0; v < kNumVoices; v++)
         {
-            fb_fx[0].chroma[v].saturate = s;
-            fb_fx[1].chroma[v].saturate = s;
-            in_fx[0].chroma[v].saturate = s;
-            in_fx[1].chroma[v].saturate = s;
+            fb_fx[0].tilt[v].saturate = s;
+            fb_fx[1].tilt[v].saturate = s;
+            in_fx[0].tilt[v].saturate = s;
+            in_fx[1].tilt[v].saturate = s;
         }
     }
 
@@ -654,54 +655,22 @@ struct NautilusEngine
     // Dry/wet mix at the output, with a one-block ramp. The wet term goes first: GCC
     // contracts the first product into an FMA, and the original fuses out·mix (not the dry);
     // with the other order the output differs by 1 ULP in some samples.
-    void Mix(float **out, size_t size, float mix_target, const float *dry_l, const float *dry_r)
+    // Mix (dry level) and Chroma (wet level) are two independent faders. The original
+    // crossfades both with Mix, by "Mix Mode" in options.json, which is now ignored.
+    void Mix(float      **out,
+             size_t       size,
+             float        dry_target,
+             float        wet_target,
+             const float *dry_l,
+             const float *dry_r)
     {
         const float n       = (float)(int)size;
-        const float mix_inc = (mix_target - mix) / n;
-        float       wet_t, dry_t;
-        switch(mix_mode)
-        {
-            case MIX_LINEAR:
-            {
-                size_t ramp = size;
-                for(size_t i = 0; i < size; i++)
-                {
-                    if(ramp)
-                    {
-                        mix += mix_inc;
-                        ramp--;
-                    }
-                    out[0][i] = out_l[i] * mix + dry_l[i] * input_level * (1.f - mix);
-                    out[1][i] = out_r[i] * mix + dry_r[i] * input_level * (1.f - mix);
-                }
-                return;
-            }
-            case MIX_CONSTANT_POWER:
-                wet_t = sinf(mix_target * HALFPI_F);
-                dry_t = sinf((1.f - mix_target) * HALFPI_F);
-                break;
-            case MIX_TRANSITION:
-                wet_t = fclamp(mix_target * 2.f, 0.f, 1.f);
-                dry_t = fclamp((1.f - mix_target) * 2.f, 0.f, 1.f);
-                break;
-            case MIX_WET_AMOUNT:
-                wet_t = mix_target * 2.f;
-                dry_t = 1.f;
-                break;
-            default: return;
-        }
-        const float dry_inc = (dry_t - dry_gain) / n;
-        const float wet_inc = (wet_t - wet_gain) / n;
-        size_t      ramp    = size;
+        const float dry_inc = (dry_target - dry_gain) / n;
+        const float wet_inc = (wet_target - wet_gain) / n;
         for(size_t i = 0; i < size; i++)
         {
-            if(ramp)
-            {
-                dry_gain += dry_inc;
-                ramp--;
-                wet_gain += wet_inc;
-                mix += mix_inc;
-            }
+            dry_gain += dry_inc;
+            wet_gain += wet_inc;
             out[0][i] = out_l[i] * wet_gain + dry_l[i] * input_level * dry_gain;
             out[1][i] = out_r[i] * wet_gain + dry_r[i] * input_level * dry_gain;
         }
@@ -775,7 +744,7 @@ struct NautilusEngine
     uint32_t field_158;                // +0x158 Init: 0. TODO(recon): main writes it and nobody
                                        // reads it, not in v1.1 nor in the RC1 either
     float    time_mult;                // +0x15c resolution (tempo multiplier)
-    float    depth;                    // +0x160 Chroma amount
+    float    depth;                    // +0x160 Depth: tilt of the feedback (0.5 = flat)
     float    feedback;                 // +0x164 smoothed
     float    mix;                      // +0x168 smoothed (per-block ramp)
     float    wet_gain;                 // +0x16c
@@ -788,14 +757,14 @@ struct NautilusEngine
     float    fwd[kNumGroups][kNumVoices];    // +0x1ac gain of the normal tap
     Reverser reader[kNumGroups][kNumVoices]; // +0x1cc
     TapBank  taps[kNumGroups];         // +0x3ac
-    ChromaBank fb_fx[kNumGroups];      // +0x80c feedback Chroma
-    ChromaBank in_fx[kNumGroups];      // +0x11cc input Chroma (only [0] is used)
+    ChromaBank fb_fx[kNumGroups];      // +0x80c feedback tilt (Chroma in the original)
+    ChromaBank in_fx[kNumGroups];      // +0x11cc input tilt (only [0] is used)
     daisysp::DcBlock dc[2];            // +0x1b8c
-    float    mix_param;                // +0x1ba4 0 if < 0.04
+    float    dry_param;                // +0x1ba4 Mix: dry level (mix_param in the original)
     float    feedback_param;           // +0x1ba8
     float    reversal;                 // +0x1bac
     float    dispersal;                // +0x1bb0
-    float    field_1bb4;               // +0x1bb4 Init: 0. TODO(recon): never read in v1.1/RC1/v1.2
+    float    wet_param;                // +0x1bb4 Chroma: wet level (unused field in the original)
     float    bpm;                      // +0x1bb8 Init: 120. TODO(recon): only main writes it (same in v1.1)
     float    period;                   // +0x1bbc tempo in samples
     int      field_1bc0;               // +0x1bc0 Init: 1. TODO(recon): not in v1.1; new in 1.2 and unused

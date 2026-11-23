@@ -236,11 +236,8 @@ static void AudioCallback(AudioHandle::InputBuffer  in,
     }
     purge_gate = purge;
 
-    float mix = hw.params[PARAM_MIX].Value();
-    if(mix < 0.04f)
-        mix = 0.f;
-    else if(mix > 0.96f)
-        mix = 1.f;
+    // Mix = dry level, Chroma = wet level. Both snap to 0 and 1 near their ends, as Mix did.
+    auto level = [](float x) { return x < 0.04f ? 0.f : x > 0.96f ? 1.f : x; };
 
     int divisions = (int)(hw.params[PARAM_SENSORS].Value() * 4.f + 1.f);
     if(divisions > 4)
@@ -248,7 +245,8 @@ static void AudioCallback(AudioHandle::InputBuffer  in,
     if(divisions < 1)
         divisions = 1;
     engine.divisions      = divisions;
-    engine.mix_param      = mix;
+    engine.dry_param      = level(hw.params[PARAM_MIX].Value());
+    engine.wet_param      = level(hw.params[PARAM_CHROMA].Value());
     engine.feedback_param = fclamp(hw.params[PARAM_FEEDBACK].Value() * 1.08f, 0.f, 1.f);
     engine.reversal       = fclamp(hw.params[PARAM_REVERSAL].Value() * 1.1f, 0.f, 1.f);
     engine.depth          = hw.params[PARAM_DEPTH].Value();
@@ -298,21 +296,6 @@ static void AudioCallback(AudioHandle::InputBuffer  in,
         hw.cvs[PARAM_RESOLUTION].SetCoeff(0.001f);
         const float x = 1.f - hw.params[PARAM_RESOLUTION].Value();
         engine.SetPeriod(x * x * x * 191900.f + 100.f);
-    }
-
-    int chroma = (int)(hw.params[PARAM_CHROMA].Value() * 6.f - 0.5f);
-    if(chroma < 0)
-        chroma = 0;
-    else if(chroma > 5)
-        chroma = 5;
-    switch(chroma)
-    {
-        case 0: engine.SetChromaMode(Chroma::MODE_LOWPASS); break;
-        case 1: engine.SetChromaMode(Chroma::MODE_HIGHPASS); break;
-        case 2: engine.SetChromaMode(Chroma::MODE_CRUSH); break;
-        case 3: engine.SetChromaMode(Chroma::MODE_DRIVE); break;
-        case 4: engine.SetChromaMode(Chroma::MODE_FOLD); break;
-        case 5: engine.SetChromaMode(Chroma::MODE_CLIP); break;
     }
 
     engine.Process(in, out, size);
