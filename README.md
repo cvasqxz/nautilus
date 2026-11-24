@@ -23,14 +23,16 @@ The filter sits inside the feedback, so the effect builds up on every pass. Chan
 
 They are independent, like two faders on a mixer, and each one follows its CV input. Both at 12 o'clock sound like the official firmware with Mix at the centre. Both fully up give about 6 dB more level, so watch the output.
 
-### Sonar: quantized pitch CV
+### Sonar: random melody in a scale
 
-The Sonar output keeps its evolving stepped voltage, built from the rhythm of the delay voices (Sensors, Dispersal and Reversal shape the pattern, and it follows the tap or Clock In tempo). Every step is now **quantized to a note at 1 V/octave**, so you can patch Sonar into an oscillator's pitch input and hear a melody in tune.
+The Sonar output is now a random melody at 1 V/octave: patch it into an oscillator's pitch input and it plays notes of a scale, always in tune.
 
-- **Shift + Freeze** picks the scale: 1 chromatic, 2 major, 3 natural minor, 4 major pentatonic, 5 minor pentatonic, 6 blues.
+- **Rhythm from the delay**: every time one of the delay voices opens or closes its gate, the note has a 25 % chance to change. Sensors, Dispersal, Reversal, Resolution and the tap or Clock In tempo shape how often that happens.
+- **Melody**: when the note changes, it usually moves up or down by up to 7 notes of the scale from the current one; one time in four it jumps to any note of the range instead.
+- **Range**: C1 to C4 (1 V to 4 V, three octaves), with 0 V as C0. Tune the root on the oscillator.
+- **Shift + Freeze** picks the scale: 1 major, 2 natural minor, 3 major pentatonic, 4 minor pentatonic, 5 blues.
 - After a change, the **Freeze LED blinks the scale number** in that scale's colour. While you hold Shift, the Freeze LED shows the colour of the current scale.
-- The scale is remembered after power-off.
-- The range is 0 to 5 V (five octaves), with 0 V as the root. Tune the root on the oscillator.
+- The scale is remembered after power-off. The melody itself is different every time: it comes from the hardware random number generator.
 
 The Sonar clock modes of the official firmware are gone.
 

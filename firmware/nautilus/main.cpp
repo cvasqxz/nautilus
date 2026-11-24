@@ -326,6 +326,8 @@ static void AudioCallback(AudioHandle::InputBuffer  in,
     }
 }
 
+static SonarWalk sonar_walk; // Sonar random walk (not in the original)
+
 // @0x240049bc — Sonar output (DAC, 12 bits) and clock phases
 static void DacCallback(uint16_t **out, size_t size)
 {
@@ -367,34 +369,26 @@ static void DacCallback(uint16_t **out, size_t size)
                              && (engine.reversed[g][v] ? out_v < 0.5f : out_v >= 0.5f);
             }
 
-        // Stepped Voltage as in the original, then quantized (see QuantizeSonar). It only
-        // changes on a gate edge or a scale change, so the last result is kept.
-        static int      last_value = -1, last_scale = -1;
-        static uint16_t last_code  = 0;
-        const int step  = 0x1000 / divisions / 2;
-        int       value = 0;
+        // Sonar: every gate edge is a chance for the random walk to move (see sonar.h)
+        static uint32_t last_gates = 0;
+        uint32_t        gates      = 0;
         for(int v = 0; v < kNumVoices; v++)
             for(int g = 0; g < kNumGroups; g++)
                 if(gate[v][g])
-                    value += step;
-        if(value > 0xfff)
-            value = 0xfff;
+                    gates |= 1u << (v * kNumGroups + g);
+        sonar_walk.SetScale(interface.main_page.sonar_scale_);
+        if(gates != last_gates)
+        {
+            last_gates = gates;
+            sonar_walk.Trigger();
+        }
         // Test page (shift held at power-up): 1 V and 3 V once per second, two octaves apart,
         // to check the scaling with a tuner or a meter
         if(interface.cal_page.IsActive())
             out[0][i] = (System::GetNow() / 1000) & 1 ? 3 * kSonarCodesPerVolt
                                                       : 1 * kSonarCodesPerVolt;
         else
-        {
-            const int scale = interface.main_page.sonar_scale_;
-            if(value != last_value || scale != last_scale)
-            {
-                last_value = value;
-                last_scale = scale;
-                last_code  = QuantizeSonar(value, scale);
-            }
-            out[0][i] = last_code;
-        }
+            out[0][i] = sonar_walk.Code();
     }
 }
 
@@ -468,6 +462,7 @@ int main(void)
     engine.SetReverbAmount(s.reverb_amount); // the original clamps it to [0, 1] when loading it
     // Settings saved before the field existed have whatever followed them in the sector
     interface.main_page.sonar_scale_ = s.sonar_scale < kNumSonarScales ? s.sonar_scale : 0;
+    sonar_walk.Init(interface.main_page.sonar_scale_);
     engine.delay_mode_pending      = true;
 
     hw.seed.StartAudio(AudioCallback);

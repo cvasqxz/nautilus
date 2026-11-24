@@ -41,7 +41,7 @@ class MainPage : public UiPage
     uint32_t        reset_time_;             // +0x30 time of Shift + Purge
     bool            saved_f8_changed_;       // +0x34 shift + pot 8
     uint8_t         free_time_;              // +0x35 shift + Delay Mode: "Freerunning Delay" (Settings)
-    uint8_t         sonar_scale_;            // +0x36 Sonar quantizer scale (Settings), padding
+    uint8_t         sonar_scale_;            // +0x36 Sonar scale (Settings), padding
                                              // in the original
     volatile bool   shift_modifier_used_;    // +0x37 shift used as a modifier while held: its
                                              // tap is not taken (AudioCallback); padding before
@@ -209,7 +209,7 @@ bool MainPage::OnButton(uint16_t buttonID,
             {
                 if(shift)
                 {
-                    // Shift + Freeze: next scale of the Sonar quantizer (the original
+                    // Shift + Freeze: next scale of the Sonar random walk (the original
                     // ignores shift here and toggles the freeze)
                     sonar_scale_      = (sonar_scale_ + 1) % kNumSonarScales;
                     sonar_scale_time_ = System::GetNow();
@@ -454,7 +454,7 @@ void MainPage::Draw(const UiCanvasDescriptor &canvas)
         hw_->SetColor(3, phase ? Color() : Color(0.7f, 1.f, 1.f) * 0.8f);
     }
 
-    // Sonar scale changed: the Freeze LED blinks N times (N = scale number, 1..6) in the
+    // Sonar scale changed: the Freeze LED blinks N times (N = scale number, 1..5) in the
     // scale's colour, 150 ms on / 150 ms off
     {
         const uint32_t t = now - sonar_scale_time_;
